@@ -1,7 +1,3 @@
-Here’s a **clean, simplified, GitHub-ready version** of your documentation:
-
----
-
 # FaMiLis — Project Overview
 
 FaMiLis is a prototype system for evaluating food products by combining **facial emotion recognition (FER)** and **user survey data**.
@@ -144,27 +140,8 @@ uvicorn app:app --host 0.0.0.0 --port 5000 --reload
 
 ---
 
-## 🔧 Next Steps (For Capstone Completion)
-
-* Integrate a **pre-trained FER model** (e.g., DeepFace)
-* Save **frame-level emotion data** to the database
-* Add **consent recording** (store in DB)
-* Align detected emotions with required categories:
-
-  * happiness, surprise, disgust, neutrality, sadness
-
----
-
 ## 📌 Notes
 
 * Designed for **small-scale testing** (10–15 participants)
 * Supports **2–3 product evaluations**
 * Focused on **R&D insights through emotion + feedback data**
-
----
-
-If you want, I can also:
-
-* Make a **README badge version** (with shields)
-* Add **API endpoint docs**
-* Or format this for **panel defense presentation** 👍
