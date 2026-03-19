@@ -7,6 +7,12 @@ type Food = {
   name: string;
   category: string;
 };
+type Participant = {
+  id: number;
+  testerLabel: string | null;
+  age: number | null;
+  gender: string | null;
+};
 
 const API_BASE = "http://localhost:5000";
 
@@ -28,6 +34,11 @@ export default function Setup() {
   const [foodsError, setFoodsError] = useState<string | null>(null);
 
   const [selectedFoodId, setSelectedFoodId] = useState<number | "">("");
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [participantLabel, setParticipantLabel] = useState("");
+  const [participantAge, setParticipantAge] = useState("");
+  const [participantGender, setParticipantGender] = useState("");
+  const [participantError, setParticipantError] = useState<string | null>(null);
   const [consent, setConsent] = useState({
     recording: false,
     dataUsage: false,
@@ -67,6 +78,28 @@ export default function Setup() {
   }, []);
 
   useEffect(() => {
+    async function loadParticipants() {
+      try {
+        const res = await fetch(`${API_BASE}/api/participants`);
+        const json = await res.json().catch(() => null);
+        if (!res.ok || !json?.ok) return;
+        const list = (json.participants ?? []) as any[];
+        setParticipants(
+          list.map((p) => ({
+            id: Number(p.id),
+            testerLabel: p.testerLabel == null ? null : String(p.testerLabel),
+            age: p.age == null ? null : Number(p.age),
+            gender: p.gender == null ? null : String(p.gender),
+          }))
+        );
+      } catch {
+        // Non-blocking for setup flow.
+      }
+    }
+    void loadParticipants();
+  }, []);
+
+  useEffect(() => {
     async function startCamera() {
       setCameraError(null);
       try {
@@ -95,26 +128,59 @@ export default function Setup() {
     () => foods.find((f) => f.id === selectedFoodId) ?? null,
     [foods, selectedFoodId]
   );
+  const selectedParticipant = useMemo(() => {
+    const label = participantLabel.trim().toLowerCase();
+    if (!label) return null;
+    return (
+      participants.find((p) => (p.testerLabel ?? "").trim().toLowerCase() === label) ?? null
+    );
+  }, [participantLabel, participants]);
+
+  useEffect(() => {
+    if (!selectedParticipant) return;
+    setParticipantAge(
+      selectedParticipant.age == null ? "" : String(selectedParticipant.age)
+    );
+    setParticipantGender(selectedParticipant.gender ?? "");
+  }, [selectedParticipant]);
 
   const canStart =
     !!selectedFoodId &&
     consent.recording &&
     consent.dataUsage &&
     consent.participant &&
+    !!participantLabel.trim() &&
     !foodsLoading &&
     !starting;
 
   const handleStart = async () => {
     if (!canStart) return;
     setStartError(null);
+    setParticipantError(null);
     setStarting(true);
     try {
+      const participantRes = await fetch(`${API_BASE}/api/participants`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          testerLabel: participantLabel.trim(),
+          age: participantAge.trim() === "" ? null : Number(participantAge),
+          gender: participantGender || null,
+        }),
+      });
+      const participantJson = await participantRes.json().catch(() => null);
+      if (!participantRes.ok || !participantJson?.ok || !participantJson?.participant?.id) {
+        throw new Error(participantJson?.error || "Failed to register participant.");
+      }
+      const createdParticipantId = Number(participantJson.participant.id);
+
       const res = await fetch(`${API_BASE}/api/sessions/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: getStoredUserId(),
           foodId: selectedFoodId as number,
+          participantId: createdParticipantId,
         }),
       });
 
@@ -126,6 +192,7 @@ export default function Setup() {
       const started = json.session as {
         id: number;
         userId: number;
+        participantId: number | null;
         foodId: number;
         status: "pending" | "active" | "completed" | "cancelled";
         startTime: string;
@@ -137,6 +204,7 @@ export default function Setup() {
         JSON.stringify({
           id: started.id,
           userId: started.userId,
+          participantId: started.participantId,
           foodId: started.foodId,
           status: started.status,
           startTime: started.startTime,
@@ -145,7 +213,9 @@ export default function Setup() {
 
       navigate("/session", { state: { session: started, food: selectedFood } });
     } catch (err: any) {
-      setStartError(err?.message || "Failed to start session.");
+      const message = err?.message || "Failed to start session.";
+      if (message.toLowerCase().includes("participant")) setParticipantError(message);
+      setStartError(message);
     } finally {
       setStarting(false);
     }
@@ -187,7 +257,7 @@ export default function Setup() {
           </button>
 
           <div className="mb-6">
-            <h1 className="text-[22px] font-bold text-gray-900">Camera Setup</h1>
+            <h1 className="text-[26px] font-bold text-gray-900">Camera Setup</h1>
             <p className="text-[12px] text-gray-500 mt-1">Configure your food testing session</p>
           </div>
 
@@ -211,6 +281,51 @@ export default function Setup() {
                 {foodsError ? (
                   <p className="text-xs text-red-600 mt-2">{foodsError}</p>
                 ) : null}
+              </div>
+
+              <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                <label className="block text-sm text-gray-700 mb-2 font-semibold">Participant Label / ID *</label>
+                <input
+                  type="text"
+                  list="participant-labels"
+                  value={participantLabel}
+                  onChange={(e) => setParticipantLabel(e.target.value)}
+                  placeholder="e.g. T-01"
+                  className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white"
+                />
+                <datalist id="participant-labels">
+                  {participants
+                    .filter((p) => p.testerLabel)
+                    .map((p) => (
+                      <option key={p.id} value={p.testerLabel as string} />
+                    ))}
+                </datalist>
+                <p className="text-[11px] text-gray-500 mt-2">
+                  Enter an existing label to reuse a participant, or a new one to create it.
+                  Matching participants auto-fill age/gender, which you can still overwrite.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                  <input
+                    type="number"
+                    value={participantAge}
+                    onChange={(e) => setParticipantAge(e.target.value)}
+                    placeholder="Age (optional)"
+                    min={0}
+                    max={120}
+                    className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white"
+                  />
+                  <select
+                    value={participantGender}
+                    onChange={(e) => setParticipantGender(e.target.value)}
+                    className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white"
+                  >
+                    <option value="">Gender (optional)</option>
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+                {participantError ? <p className="text-xs text-red-600 mt-2">{participantError}</p> : null}
               </div>
 
               <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
