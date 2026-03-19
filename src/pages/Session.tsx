@@ -227,7 +227,7 @@ export default function Session() {
           </button>
 
           <div className="mb-6">
-            <h1 className="text-[22px] font-bold text-gray-900">Camera Recording</h1>
+            <h1 className="text-[26px] font-bold text-gray-900">Camera Recording</h1>
             <p className="text-[12px] text-gray-500 mt-1">
               {food ? `${food.name} • ${food.category}` : "Session"}
             </p>
