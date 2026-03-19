@@ -1,12 +1,44 @@
 import express from "express";
 import cors from "cors";
 import { initDb } from "./init.js";
+import multer from "multer";
+import { mkdir } from "fs/promises";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 let poolPromise = null;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const uploadsRoot = path.resolve(__dirname, "uploads");
+const foodUploadsDir = path.join(uploadsRoot, "foods");
+await mkdir(foodUploadsDir, { recursive: true });
+
+const foodStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, foodUploadsDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    const safeExt = [".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext) ? ext : ".jpg";
+    cb(null, `food-${req.params.foodId}-${Date.now()}${safeExt}`);
+  },
+});
+
+const uploadFoodImage = multer({
+  storage: foodStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (!file.mimetype?.startsWith("image/")) {
+      cb(new Error("Only image uploads are supported."));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+app.use("/uploads", express.static(uploadsRoot));
 
 async function start() {
   if (!poolPromise) {
@@ -19,6 +51,7 @@ async function start() {
     const d = v instanceof Date ? v : new Date(v);
     return Number.isNaN(d.getTime()) ? null : d.toISOString();
   }
+  const allowedSessionStatuses = new Set(["pending", "active", "completed", "cancelled"]);
 
   // Simple health endpoint to verify server + DB
   app.get("/api/health", async (_req, res) => {
@@ -75,6 +108,118 @@ async function start() {
     }
   });
 
+  app.get("/api/participants", async (_req, res) => {
+    try {
+      const [rows] = await pool.query(
+        `
+        SELECT participant_id, tester_label, age, gender, created_at
+        FROM participants
+        ORDER BY created_at DESC, participant_id DESC
+      `
+      );
+      return res.json({
+        ok: true,
+        participants: rows.map((r) => ({
+          id: Number(r.participant_id),
+          testerLabel: r.tester_label == null ? null : String(r.tester_label),
+          age: r.age == null ? null : Number(r.age),
+          gender: r.gender == null ? null : String(r.gender),
+          createdAt: toIsoOrNull(r.created_at),
+        })),
+      });
+    } catch (err) {
+      console.error("GET /api/participants error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
+  app.post("/api/participants", async (req, res) => {
+    const rawLabel = req.body?.testerLabel;
+    const testerLabel = typeof rawLabel === "string" ? rawLabel.trim() : "";
+    const ageRaw = req.body?.age;
+    const genderRaw = req.body?.gender;
+    if (!testerLabel) {
+      return res.status(400).json({ ok: false, error: "testerLabel is required." });
+    }
+    const age =
+      ageRaw == null || ageRaw === ""
+        ? null
+        : Number.isFinite(Number(ageRaw))
+          ? Math.round(Number(ageRaw))
+          : null;
+    if (age != null && (age < 0 || age > 120)) {
+      return res.status(400).json({ ok: false, error: "age must be between 0 and 120." });
+    }
+    const allowedGenders = new Set(["male", "female", "other"]);
+    const gender = genderRaw == null || genderRaw === "" ? null : String(genderRaw);
+    if (gender != null && !allowedGenders.has(gender)) {
+      return res.status(400).json({ ok: false, error: "gender must be male, female, or other." });
+    }
+
+    try {
+      const [[existing]] = await pool.query(
+        `
+        SELECT participant_id, tester_label, age, gender, created_at
+        FROM participants
+        WHERE tester_label = ?
+        LIMIT 1
+      `,
+        [testerLabel]
+      );
+
+      if (existing) {
+        await pool.query(
+          `
+          UPDATE participants
+          SET age = COALESCE(?, age),
+              gender = COALESCE(?, gender)
+          WHERE participant_id = ?
+        `,
+          [age, gender, Number(existing.participant_id)]
+        );
+        const [[updated]] = await pool.query(
+          `
+          SELECT participant_id, tester_label, age, gender, created_at
+          FROM participants
+          WHERE participant_id = ?
+          LIMIT 1
+        `,
+          [Number(existing.participant_id)]
+        );
+        return res.json({
+          ok: true,
+          participant: {
+            id: Number(updated.participant_id),
+            testerLabel: updated.tester_label == null ? null : String(updated.tester_label),
+            age: updated.age == null ? null : Number(updated.age),
+            gender: updated.gender == null ? null : String(updated.gender),
+            createdAt: toIsoOrNull(updated.created_at),
+          },
+          reused: true,
+        });
+      }
+
+      const [result] = await pool.query(
+        `INSERT INTO participants (tester_label, age, gender) VALUES (?, ?, ?)`,
+        [testerLabel, age, gender]
+      );
+      return res.json({
+        ok: true,
+        participant: {
+          id: Number(result.insertId),
+          testerLabel,
+          age,
+          gender,
+          createdAt: new Date().toISOString(),
+        },
+        reused: false,
+      });
+    } catch (err) {
+      console.error("POST /api/participants error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
   // Foods list for dashboard
   app.get("/api/foods", async (_req, res) => {
     try {
@@ -84,6 +229,7 @@ async function start() {
           fp.food_id,
           fp.name,
           fp.category,
+          fp.image_url,
           fp.created_at,
           COUNT(s.session_id) AS sessions_total,
           SUM(CASE WHEN s.status = 'active' THEN 1 ELSE 0 END) AS sessions_active,
@@ -95,7 +241,7 @@ async function start() {
           ) AS avg_duration_min
         FROM food_products fp
         LEFT JOIN sessions s ON s.food_id = fp.food_id
-        GROUP BY fp.food_id, fp.name, fp.category, fp.created_at
+        GROUP BY fp.food_id, fp.name, fp.category, fp.image_url, fp.created_at
         ORDER BY fp.created_at DESC, fp.food_id DESC
       `
       );
@@ -104,6 +250,7 @@ async function start() {
         id: Number(r.food_id),
         name: r.name,
         category: r.category,
+        imageUrl: r.image_url == null ? null : String(r.image_url),
         createdAt: toIsoOrNull(r.created_at),
         sessionsTotal: Number(r.sessions_total ?? 0),
         sessionsActive: Number(r.sessions_active ?? 0),
@@ -151,6 +298,35 @@ async function start() {
     }
   });
 
+  app.post("/api/foods/:foodId/image", uploadFoodImage.single("image"), async (req, res) => {
+    const foodId = Number.parseInt(req.params.foodId, 10);
+    if (!Number.isFinite(foodId)) {
+      return res.status(400).json({ ok: false, error: "Invalid foodId." });
+    }
+    if (!req.file) {
+      return res.status(400).json({ ok: false, error: "Image file is required." });
+    }
+
+    try {
+      const imageUrl = `/uploads/foods/${req.file.filename}`;
+      const [result] = await pool.query(
+        `
+        UPDATE food_products
+        SET image_url = ?
+        WHERE food_id = ?
+      `,
+        [imageUrl, foodId]
+      );
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ ok: false, error: "Food not found." });
+      }
+      return res.json({ ok: true, imageUrl });
+    } catch (err) {
+      console.error("POST /api/foods/:foodId/image error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
   // Delete food (cascades sessions/frame_logs/survey_results via FKs)
   app.delete("/api/foods/:foodId", async (req, res) => {
     const foodId = Number.parseInt(req.params.foodId, 10);
@@ -158,15 +334,29 @@ async function start() {
       return res.status(400).json({ ok: false, error: "Invalid foodId." });
     }
 
+    let conn;
     try {
-      const [result] = await pool.query(`DELETE FROM food_products WHERE food_id = ?`, [foodId]);
+      conn = await pool.getConnection();
+      await conn.beginTransaction();
+
+      const [sessionDelete] = await conn.query(`DELETE FROM sessions WHERE food_id = ?`, [foodId]);
+      const [result] = await conn.query(`DELETE FROM food_products WHERE food_id = ?`, [foodId]);
       if (result.affectedRows === 0) {
+        await conn.rollback();
         return res.status(404).json({ ok: false, error: "Food not found." });
       }
-      return res.json({ ok: true });
+
+      await conn.commit();
+      return res.json({
+        ok: true,
+        deletedSessions: Number(sessionDelete?.affectedRows ?? 0),
+      });
     } catch (err) {
+      if (conn) await conn.rollback();
       console.error("DELETE /api/foods/:foodId error:", err);
       return res.status(500).json({ ok: false, error: "Server error." });
+    } finally {
+      conn?.release();
     }
   });
 
@@ -222,6 +412,15 @@ async function start() {
     }
 
     try {
+      const [[sessionCountRow]] = await pool.query(
+        `
+        SELECT COUNT(*) AS session_count
+        FROM sessions
+        WHERE food_id = ?
+      `,
+        [foodId]
+      );
+
       const [[confidenceRow]] = await pool.query(
         `
         SELECT AVG(fl.confidence_score) AS mean_confidence
@@ -245,9 +444,9 @@ async function start() {
       const [[distRow]] = await pool.query(
         `
         SELECT
-          SUM(CASE WHEN (fl.hedonic_score * 10) >= 7 THEN 1 ELSE 0 END) AS positive_count,
-          SUM(CASE WHEN (fl.hedonic_score * 10) >= 5 AND (fl.hedonic_score * 10) < 7 THEN 1 ELSE 0 END) AS neutral_count,
-          SUM(CASE WHEN (fl.hedonic_score * 10) < 5 THEN 1 ELSE 0 END) AS negative_count,
+          SUM(CASE WHEN (fl.hedonic_score * 8 + 1) >= 7 THEN 1 ELSE 0 END) AS positive_count,
+          SUM(CASE WHEN (fl.hedonic_score * 8 + 1) >= 5 AND (fl.hedonic_score * 8 + 1) < 7 THEN 1 ELSE 0 END) AS neutral_count,
+          SUM(CASE WHEN (fl.hedonic_score * 8 + 1) < 5 THEN 1 ELSE 0 END) AS negative_count,
           COUNT(fl.frame_log_id) AS total_count
         FROM frame_logs fl
         INNER JOIN sessions s ON s.session_id = fl.session_id
@@ -282,13 +481,19 @@ async function start() {
         [foodId]
       );
 
-      const to10 = (n) => (n == null ? null : (Number(n) / 9) * 10);
+      const to9FromNormalized = (n) => (n == null ? null : Number(n) * 8 + 1);
       const radar = [
-        { label: "Color", score: to10(radarRow?.color_rating) ?? 0 },
-        { label: "Flavor/Aroma", score: to10(radarRow?.flavor_aroma_rating) ?? 0 },
-        { label: "Salt/Sweet", score: to10(radarRow?.salt_sweet_rating) ?? 0 },
-        { label: "Texture", score: to10(radarRow?.texture_rating) ?? 0 },
-        { label: "Overall", score: to10(radarRow?.final_overall_rating) ?? 0 },
+        { label: "Color", score: radarRow?.color_rating == null ? 0 : Number(radarRow.color_rating) },
+        {
+          label: "Flavor/Aroma",
+          score: radarRow?.flavor_aroma_rating == null ? 0 : Number(radarRow.flavor_aroma_rating),
+        },
+        { label: "Salt/Sweet", score: radarRow?.salt_sweet_rating == null ? 0 : Number(radarRow.salt_sweet_rating) },
+        { label: "Texture", score: radarRow?.texture_rating == null ? 0 : Number(radarRow.texture_rating) },
+        {
+          label: "Overall",
+          score: radarRow?.final_overall_rating == null ? 0 : Number(radarRow.final_overall_rating),
+        },
       ];
 
       let timeline = [
@@ -319,9 +524,9 @@ async function start() {
 
         const byBucket = new Map(timelineRows.map((r) => [Number(r.bucket), Number(r.avg_score)]));
         timeline = [
-          { label: "First taste", score: (byBucket.get(1) ?? 0) * 10, sub: "Early" },
-          { label: "Mid", score: (byBucket.get(2) ?? 0) * 10, sub: "Middle" },
-          { label: "Aftertaste", score: (byBucket.get(3) ?? 0) * 10, sub: "Late" },
+          { label: "First taste", score: to9FromNormalized(byBucket.get(1)) ?? 0, sub: "Early" },
+          { label: "Mid", score: to9FromNormalized(byBucket.get(2)) ?? 0, sub: "Middle" },
+          { label: "Aftertaste", score: to9FromNormalized(byBucket.get(3)) ?? 0, sub: "Late" },
         ];
       } catch (err) {
         // If NTILE/WITH isn't supported, keep timeline as zeros.
@@ -332,15 +537,16 @@ async function start() {
         `
         SELECT
           CASE
-            WHEN sr.age BETWEEN 18 AND 25 THEN '18–25'
-            WHEN sr.age BETWEEN 26 AND 40 THEN '26–40'
-            WHEN sr.age BETWEEN 41 AND 60 THEN '41–60'
-            WHEN sr.age >= 61 THEN '61+'
+            WHEN p.age BETWEEN 18 AND 25 THEN '18–25'
+            WHEN p.age BETWEEN 26 AND 40 THEN '26–40'
+            WHEN p.age BETWEEN 41 AND 60 THEN '41–60'
+            WHEN p.age >= 61 THEN '61+'
             ELSE 'Unknown'
           END AS age_group,
           AVG(sr.final_overall_rating) AS avg_rating
         FROM survey_results sr
         INNER JOIN sessions s ON s.session_id = sr.session_id
+        LEFT JOIN participants p ON p.participant_id = s.participant_id
         WHERE s.food_id = ?
         GROUP BY age_group
       `,
@@ -350,10 +556,11 @@ async function start() {
       const [genderRows] = await pool.query(
         `
         SELECT
-          COALESCE(sr.gender, 'other') AS gender,
+          COALESCE(p.gender, 'other') AS gender,
           AVG(sr.final_overall_rating) AS avg_rating
         FROM survey_results sr
         INNER JOIN sessions s ON s.session_id = sr.session_id
+        LEFT JOIN participants p ON p.participant_id = s.participant_id
         WHERE s.food_id = ?
         GROUP BY gender
       `,
@@ -362,25 +569,40 @@ async function start() {
 
       const byAge = ageRows
         .filter((r) => r.age_group !== "Unknown")
-        .map((r) => ({ label: r.age_group, score: to10(r.avg_rating) ?? 0 }));
+        .map((r) => ({ label: r.age_group, score: r.avg_rating == null ? 0 : Number(r.avg_rating) }));
 
       const byGender = genderRows.map((r) => ({
         label: String(r.gender).charAt(0).toUpperCase() + String(r.gender).slice(1),
-        score: to10(r.avg_rating) ?? 0,
+        score: r.avg_rating == null ? 0 : Number(r.avg_rating),
       }));
+
+      const [[surveyCountRow]] = await pool.query(
+        `
+        SELECT COUNT(*) AS survey_count
+        FROM survey_results sr
+        INNER JOIN sessions s ON s.session_id = sr.session_id
+        WHERE s.food_id = ?
+      `,
+        [foodId]
+      );
+      const sessionCount = Number(sessionCountRow?.session_count ?? 0);
+      const surveyCount = Number(surveyCountRow?.survey_count ?? 0);
 
       return res.json({
         ok: true,
         analytics: {
           meanConfidence: confidenceRow?.mean_confidence == null ? 0 : Number(confidenceRow.mean_confidence),
-          // hedonic_score is stored 0..1 in frame_logs; scale to 0..10 for the dashboard.
-          meanHedonic: hedonicRow?.mean_hedonic == null ? 0 : Number(hedonicRow.mean_hedonic) * 10,
+          // hedonic_score is normalized 0..1 in frame_logs; map to 1..9 for UI consistency.
+          meanHedonic: hedonicRow?.mean_hedonic == null ? 0 : Number(hedonicRow.mean_hedonic) * 8 + 1,
           distribution,
           radar,
           timeline,
           byAge,
           byGender,
-          sampleSize: totalCount,
+          sampleSize: surveyCount,
+          sessionCount,
+          frameLogCount: totalCount,
+          surveyCount,
         },
       });
     } catch (err) {
@@ -391,21 +613,25 @@ async function start() {
 
   // Start a new session for a given food/user (used by Camera Setup)
   app.post("/api/sessions/start", async (req, res) => {
-    const { userId, foodId } = req.body ?? {};
+    const { userId, foodId, participantId } = req.body ?? {};
     const uId = Number.parseInt(String(userId ?? ""), 10);
     const fId = Number.parseInt(String(foodId ?? ""), 10);
+    const pId =
+      participantId == null || participantId === ""
+        ? null
+        : Number.parseInt(String(participantId), 10);
 
-    if (!Number.isFinite(uId) || !Number.isFinite(fId)) {
-      return res.status(400).json({ ok: false, error: "userId and foodId are required." });
+    if (!Number.isFinite(uId) || !Number.isFinite(fId) || (pId != null && !Number.isFinite(pId))) {
+      return res.status(400).json({ ok: false, error: "userId, foodId, and optional participantId are required." });
     }
 
     try {
       const [result] = await pool.query(
         `
-        INSERT INTO sessions (user_id, food_id, start_time, status)
-        VALUES (?, ?, NOW(), 'active')
+        INSERT INTO sessions (user_id, participant_id, food_id, start_time, status)
+        VALUES (?, ?, ?, NOW(), 'active')
       `,
-        [uId, fId]
+        [uId, pId, fId]
       );
 
       return res.json({
@@ -413,6 +639,7 @@ async function start() {
         session: {
           id: Number(result.insertId),
           userId: uId,
+          participantId: pId,
           foodId: fId,
           status: "active",
           startTime: new Date().toISOString(),
@@ -437,12 +664,14 @@ async function start() {
         SELECT
           s.session_id,
           s.user_id,
+          s.participant_id,
           s.food_id,
           s.status,
           s.start_time,
           s.end_time,
           fp.name AS food_name,
-          fp.category AS food_category
+          fp.category AS food_category,
+          fp.image_url AS food_image_url
         FROM sessions s
         LEFT JOIN food_products fp ON fp.food_id = s.food_id
         WHERE s.session_id = ?
@@ -462,6 +691,7 @@ async function start() {
         session: {
           id: Number(r.session_id),
           userId: Number(r.user_id),
+          participantId: r.participant_id == null ? null : Number(r.participant_id),
           foodId: Number(r.food_id),
           status: r.status,
           startTime: toIsoOrNull(r.start_time),
@@ -472,6 +702,7 @@ async function start() {
               id: Number(r.food_id),
               name: String(r.food_name),
               category: String(r.food_category ?? ""),
+              imageUrl: r.food_image_url == null ? null : String(r.food_image_url),
             }
           : null,
       });
@@ -494,12 +725,14 @@ async function start() {
         SELECT
           s.session_id,
           s.user_id,
+          s.participant_id,
           s.food_id,
           s.status,
           s.start_time,
           s.end_time,
           fp.name AS food_name,
-          fp.category AS food_category
+          fp.category AS food_category,
+          fp.image_url AS food_image_url
         FROM sessions s
         LEFT JOIN food_products fp ON fp.food_id = s.food_id
         WHERE s.session_id = ?
@@ -530,7 +763,8 @@ async function start() {
           timestamp,
           face_detected,
           confidence_score,
-          hedonic_score
+          hedonic_score,
+          frame_image_url
         FROM frame_logs
         WHERE session_id = ?
         ORDER BY timestamp ASC
@@ -554,16 +788,18 @@ async function start() {
       const [[surveyRow]] = await pool.query(
         `
         SELECT
-          age,
-          gender,
+          p.age AS participant_age,
+          p.gender AS participant_gender,
           color_rating,
           flavor_aroma_rating,
           salt_sweet_rating,
           texture_rating,
           final_overall_rating,
           remarks
-        FROM survey_results
-        WHERE session_id = ?
+        FROM sessions s
+        LEFT JOIN survey_results sr ON sr.session_id = s.session_id
+        LEFT JOIN participants p ON p.participant_id = s.participant_id
+        WHERE s.session_id = ?
         LIMIT 1
         `,
         [sessionId]
@@ -574,6 +810,7 @@ async function start() {
         session: {
           id: Number(sessionRow.session_id),
           userId: Number(sessionRow.user_id),
+          participantId: sessionRow.participant_id == null ? null : Number(sessionRow.participant_id),
           foodId: Number(sessionRow.food_id),
           status: sessionRow.status,
           startTime: toIsoOrNull(sessionRow.start_time),
@@ -584,6 +821,7 @@ async function start() {
               id: Number(sessionRow.food_id),
               name: String(sessionRow.food_name),
               category: String(sessionRow.food_category ?? ""),
+              imageUrl: sessionRow.food_image_url == null ? null : String(sessionRow.food_image_url),
             }
           : null,
         metrics: {
@@ -598,6 +836,7 @@ async function start() {
           faceDetected: r.face_detected == null ? null : Boolean(r.face_detected),
           confidenceScore: r.confidence_score == null ? null : Number(r.confidence_score),
           hedonicScore: r.hedonic_score == null ? null : Number(r.hedonic_score),
+          frameImageUrl: r.frame_image_url == null ? null : String(r.frame_image_url),
         })),
         systemLogs: (systemRows ?? []).map((r) => ({
           logType: r.log_type,
@@ -606,8 +845,8 @@ async function start() {
         })),
         surveyResults: surveyRow
           ? {
-              age: surveyRow.age == null ? null : Number(surveyRow.age),
-              gender: surveyRow.gender == null ? null : String(surveyRow.gender),
+              age: surveyRow.participant_age == null ? null : Number(surveyRow.participant_age),
+              gender: surveyRow.participant_gender == null ? null : String(surveyRow.participant_gender),
               colorRating: surveyRow.color_rating == null ? null : Number(surveyRow.color_rating),
               flavorAromaRating:
                 surveyRow.flavor_aroma_rating == null ? null : Number(surveyRow.flavor_aroma_rating),
@@ -655,6 +894,7 @@ async function start() {
         SELECT
           session_id,
           user_id,
+          participant_id,
           food_id,
           status,
           start_time,
@@ -671,6 +911,7 @@ async function start() {
         session: {
           id: Number(row.session_id),
           userId: Number(row.user_id),
+          participantId: row.participant_id == null ? null : Number(row.participant_id),
           foodId: Number(row.food_id),
           status: row.status,
           startTime: toIsoOrNull(row.start_time),
@@ -683,6 +924,82 @@ async function start() {
     }
   });
 
+  // Update session status from session detail header control
+  app.patch("/api/sessions/:sessionId/status", async (req, res) => {
+    const sessionId = Number.parseInt(req.params.sessionId, 10);
+    if (!Number.isFinite(sessionId)) {
+      return res.status(400).json({ ok: false, error: "Invalid sessionId." });
+    }
+    const statusRaw = req.body?.status;
+    const status = typeof statusRaw === "string" ? statusRaw.trim().toLowerCase() : "";
+    if (!allowedSessionStatuses.has(status)) {
+      return res.status(400).json({
+        ok: false,
+        error: "status must be one of pending, active, completed, cancelled.",
+      });
+    }
+
+    try {
+      const [result] = await pool.query(
+        `
+        UPDATE sessions
+        SET status = ?,
+            end_time = CASE
+              WHEN ? = 'completed' AND end_time IS NULL THEN NOW()
+              ELSE end_time
+            END
+        WHERE session_id = ?
+      `,
+        [status, status, sessionId]
+      );
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ ok: false, error: "Session not found." });
+      }
+
+      const [[row]] = await pool.query(
+        `
+        SELECT session_id, user_id, participant_id, food_id, status, start_time, end_time
+        FROM sessions
+        WHERE session_id = ?
+        LIMIT 1
+      `,
+        [sessionId]
+      );
+      return res.json({
+        ok: true,
+        session: {
+          id: Number(row.session_id),
+          userId: Number(row.user_id),
+          participantId: row.participant_id == null ? null : Number(row.participant_id),
+          foodId: Number(row.food_id),
+          status: row.status,
+          startTime: toIsoOrNull(row.start_time),
+          endTime: toIsoOrNull(row.end_time),
+        },
+      });
+    } catch (err) {
+      console.error("PATCH /api/sessions/:sessionId/status error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
+  app.delete("/api/sessions/:sessionId", async (req, res) => {
+    const sessionId = Number.parseInt(req.params.sessionId, 10);
+    if (!Number.isFinite(sessionId)) {
+      return res.status(400).json({ ok: false, error: "Invalid sessionId." });
+    }
+    try {
+      const [result] = await pool.query(`DELETE FROM sessions WHERE session_id = ?`, [sessionId]);
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ ok: false, error: "Session not found." });
+      }
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error("DELETE /api/sessions/:sessionId error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
   // Submit survey results for a session (one row per session via UNIQUE(session_id))
   app.post("/api/sessions/:sessionId/survey", async (req, res) => {
     const sessionId = Number.parseInt(req.params.sessionId, 10);
@@ -691,8 +1008,6 @@ async function start() {
     }
 
     const {
-      age,
-      gender,
       colorRating,
       flavorAromaRating,
       saltSweetRating,
@@ -713,18 +1028,6 @@ async function start() {
       const t = v.trim();
       return t.length ? t : null;
     };
-
-    const allowedGenders = new Set(["male", "female", "other"]);
-    const ageInt = toIntOrNull(age);
-
-    if (ageInt != null && (ageInt < 0 || ageInt > 120)) {
-      return res.status(400).json({ ok: false, error: "age must be between 0 and 120." });
-    }
-
-    const genderVal = gender == null ? null : String(gender);
-    if (genderVal != null && !allowedGenders.has(genderVal)) {
-      return res.status(400).json({ ok: false, error: "gender must be male, female, or other." });
-    }
 
     const colorInt = toIntOrNull(colorRating);
     const flavorInt = toIntOrNull(flavorAromaRating);
@@ -785,15 +1088,13 @@ async function start() {
       await pool.query(
         `
         INSERT INTO survey_results (
-          session_id, age, gender,
+          session_id,
           color_rating, flavor_aroma_rating, salt_sweet_rating,
           texture_rating, final_overall_rating,
           remarks
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
-          age = VALUES(age),
-          gender = VALUES(gender),
           color_rating = VALUES(color_rating),
           flavor_aroma_rating = VALUES(flavor_aroma_rating),
           salt_sweet_rating = VALUES(salt_sweet_rating),
@@ -803,8 +1104,6 @@ async function start() {
       `,
         [
           sessionId,
-          ageInt,
-          genderVal,
           colorInt,
           flavorInt,
           saltInt,
