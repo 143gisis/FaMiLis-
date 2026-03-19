@@ -1,8 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Tooltip,
+  Legend,
+} from "chart.js";
+import { Line } from "react-chartjs-2";
 
 const API_BASE = "http://localhost:5000";
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
 type TabKey = "frame" | "system" | "survey";
 type SessionStatus = "pending" | "active" | "completed" | "cancelled";
@@ -11,6 +22,7 @@ type Food = {
   id: number;
   name: string;
   category: string;
+  imageUrl?: string | null;
 };
 
 type FrameLog = {
@@ -18,6 +30,7 @@ type FrameLog = {
   faceDetected: boolean | null;
   confidenceScore: number | null; // 0..1
   hedonicScore: number | null; // 0..1
+  frameImageUrl?: string | null;
 };
 
 type SystemLog = {
@@ -87,6 +100,12 @@ function formatDateTime(iso: string | null) {
   return d.toLocaleString();
 }
 
+function toApiUrl(url: string | null | undefined) {
+  if (!url) return null;
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  return `${API_BASE}${url}`;
+}
+
 export default function SessionDetail() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -117,6 +136,10 @@ export default function SessionDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<SessionDetailPayload | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ url: string; label: string } | null>(null);
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletePending, setDeletePending] = useState(false);
 
   useEffect(() => {
     if (!sessionId) {
@@ -155,11 +178,92 @@ export default function SessionDetail() {
 
   const content = data;
   const status = content?.session.status ?? "completed";
+  const statusOptions: SessionStatus[] = ["pending", "active", "completed", "cancelled"];
 
   const meanConfidencePct =
     content?.metrics.meanConfidence == null ? null : Math.round(content.metrics.meanConfidence * 100);
-  const meanHedonicOutOf10 =
-    content?.metrics.meanHedonic == null ? null : content.metrics.meanHedonic * 10;
+  const meanHedonicOutOf9 =
+    content?.metrics.meanHedonic == null ? null : content.metrics.meanHedonic * 8 + 1;
+  const frameLineData = useMemo(() => {
+    const labels = (content?.frameLogs ?? []).map((f, idx) => {
+      if (!f.timestamp) return `Frame ${idx + 1}`;
+      const d = new Date(f.timestamp);
+      if (Number.isNaN(d.getTime())) return `Frame ${idx + 1}`;
+      return d.toLocaleTimeString();
+    });
+    return {
+      labels,
+      datasets: [
+        {
+          label: "Hedonic score",
+          data: (content?.frameLogs ?? []).map((f) =>
+            f.hedonicScore == null ? null : Number((f.hedonicScore * 8 + 1).toFixed(1))
+          ),
+          borderColor: "rgb(232, 23, 74)",
+          backgroundColor: "rgba(232, 23, 74, 0.25)",
+          borderWidth: 2,
+          spanGaps: true,
+          tension: 0.25,
+          pointRadius: 3,
+        },
+      ],
+    };
+  }, [content?.frameLogs]);
+  const frameLineOptions = useMemo(
+    () =>
+      ({
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } },
+          y: { min: 1, max: 9, ticks: { stepSize: 1 } },
+        },
+      }) as const,
+    []
+  );
+
+  const onChangeStatus = async (nextStatus: SessionStatus) => {
+    if (!content || statusSaving || nextStatus === content.session.status) return;
+    setStatusSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/sessions/${content.session.id}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok || !json?.session) {
+        throw new Error(json?.error || "Failed to update session status.");
+      }
+      setData((prev) => (prev ? { ...prev, session: json.session } : prev));
+    } catch (err: any) {
+      setError(err?.message || "Failed to update session status.");
+    } finally {
+      setStatusSaving(false);
+    }
+  };
+
+  const onDeleteSession = async () => {
+    if (!content) return;
+    setDeletePending(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/sessions/${content.session.id}`, { method: "DELETE" });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || "Failed to delete session.");
+      }
+      localStorage.removeItem("familis.currentSession");
+      navigate("/dashboard");
+    } catch (err: any) {
+      setError(err?.message || "Failed to delete session.");
+    } finally {
+      setDeletePending(false);
+      setDeleteOpen(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#f6f7fb]" style={{ fontFamily: "'Montserrat', sans-serif" }}>
@@ -185,7 +289,14 @@ export default function SessionDetail() {
               <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
                 <div>
                   <div className="flex items-center gap-3 flex-wrap">
-                    <h1 className="text-[20px] font-bold text-gray-900">
+                    {content.food?.imageUrl ? (
+                      <img
+                        src={toApiUrl(content.food.imageUrl) ?? undefined}
+                        alt={content.food.name}
+                        className="w-16 h-16 rounded-lg border border-gray-200 object-cover"
+                      />
+                    ) : null}
+                    <h1 className="text-[26px] font-bold text-gray-900">
                       S-{content.session.id}
                     </h1>
                     <span
@@ -202,6 +313,28 @@ export default function SessionDetail() {
                   <p className="text-[12px] text-gray-500 mt-1">
                     {formatDateTime(content.session.startTime)} - {formatDateTime(content.session.endTime)}
                   </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={status}
+                    onChange={(e) => onChangeStatus(e.target.value as SessionStatus)}
+                    disabled={statusSaving}
+                    className="text-sm border border-gray-200 rounded-md px-3 py-2 bg-white"
+                    aria-label="Session status"
+                  >
+                    {statusOptions.map((s) => (
+                      <option key={s} value={s}>
+                        {formatStatus(s)}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setDeleteOpen(true)}
+                    className="text-sm border border-red-200 text-red-700 hover:bg-red-50 rounded-md px-3 py-2"
+                  >
+                    Delete Session
+                  </button>
                 </div>
               </div>
 
@@ -229,7 +362,7 @@ export default function SessionDetail() {
                   icon="🍦"
                   iconBg="bg-red-50 text-[#e8174a]"
                   title="Avg Hedonic Score"
-                  value={meanHedonicOutOf10 == null ? "-" : `${meanHedonicOutOf10.toFixed(1)}`}
+                  value={meanHedonicOutOf9 == null ? "-" : `${meanHedonicOutOf9.toFixed(1)}`}
                 />
               </div>
 
@@ -257,20 +390,31 @@ export default function SessionDetail() {
                     {content.frameLogs.length === 0 ? (
                       <div className="text-[12px] text-gray-500">No frame logs available.</div>
                     ) : (
-                      <div className="overflow-x-auto">
-                        <table className="min-w-[720px] w-full text-left">
+                      <div className="space-y-4">
+                        <div className="bg-gray-50 rounded-lg border border-gray-100 p-3">
+                          <p className="text-[12px] text-gray-600 mb-2 font-semibold">
+                            Hedonic score over time
+                          </p>
+                          <div className="h-[220px]">
+                            <Line data={frameLineData as any} options={frameLineOptions as any} />
+                          </div>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="min-w-[720px] w-full text-left">
                           <thead>
                             <tr className="text-[12px] text-gray-500 bg-gray-50">
                               <th className="px-3 py-3 font-semibold">Timestamp</th>
                               <th className="px-3 py-3 font-semibold">Face Detected</th>
                               <th className="px-3 py-3 font-semibold">Confidence Score</th>
                               <th className="px-3 py-3 font-semibold">Hedonic Score</th>
+                              <th className="px-3 py-3 font-semibold">Frame Image</th>
                             </tr>
                           </thead>
                           <tbody>
                             {content.frameLogs.map((f, idx) => {
                               const confPct = f.confidenceScore == null ? 0 : clampPct(f.confidenceScore * 100);
-                              const hedonic = f.hedonicScore == null ? null : Math.round(f.hedonicScore * 10);
+                              const hedonic =
+                                f.hedonicScore == null ? null : Number((f.hedonicScore * 8 + 1).toFixed(1));
                               return (
                                 <tr key={`${f.timestamp ?? "t"}-${idx}`} className="border-t border-gray-100">
                                   <td className="px-3 py-3 text-[12px] text-gray-700">
@@ -301,18 +445,41 @@ export default function SessionDetail() {
                                   </td>
                                   <td className="px-3 py-3 text-[12px] text-gray-700">
                                     {hedonic == null ? (
-                                      <span className="text-gray-400">0 / 10</span>
+                                      <span className="text-gray-400">- / 9</span>
                                     ) : (
                                       <span className="font-semibold">
-                                        {hedonic} / 10
+                                        {hedonic} / 9
                                       </span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-3 text-[12px] text-gray-700">
+                                    {f.frameImageUrl ? (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setPreviewImage({
+                                            url: toApiUrl(f.frameImageUrl) ?? "",
+                                            label: formatDateTime(f.timestamp),
+                                          })
+                                        }
+                                        className="group"
+                                      >
+                                        <img
+                                          src={toApiUrl(f.frameImageUrl) ?? undefined}
+                                          alt={`Frame at ${formatDateTime(f.timestamp)}`}
+                                          className="w-12 h-12 rounded-md border border-gray-200 object-cover group-hover:opacity-90"
+                                        />
+                                      </button>
+                                    ) : (
+                                      <span className="text-gray-400">-</span>
                                     )}
                                   </td>
                                 </tr>
                               );
                             })}
                           </tbody>
-                        </table>
+                          </table>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -395,8 +562,8 @@ export default function SessionDetail() {
                             <div className="flex items-center justify-between mb-2">
                               <p className="text-[12px] text-gray-700 font-semibold">Overall Rating</p>
                               <p className="text-[12px] text-gray-700 font-semibold">
-                                {formatRatingOutOf10(content.surveyResults.finalOverallRating)}
-                                {" / 10"}
+                                {formatRatingOutOf9(content.surveyResults.finalOverallRating)}
+                                {" / 9"}
                               </p>
                             </div>
                             <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
@@ -404,7 +571,7 @@ export default function SessionDetail() {
                                 className="h-full bg-[#e8174a]"
                                 style={{
                                   width: `${clampPct(
-                                    (ratingToOutOf10(content.surveyResults.finalOverallRating) / 10) * 100
+                                    (ratingToOutOf9(content.surveyResults.finalOverallRating) / 9) * 100
                                   )}%`,
                                 }}
                               />
@@ -434,6 +601,57 @@ export default function SessionDetail() {
           )}
         </div>
       </main>
+      {previewImage ? (
+        <div
+          className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl p-3 max-w-3xl w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-semibold text-gray-800">Frame Preview ({previewImage.label})</p>
+              <button
+                type="button"
+                onClick={() => setPreviewImage(null)}
+                className="text-xs text-gray-600 hover:text-gray-900"
+              >
+                Close
+              </button>
+            </div>
+            <img src={previewImage.url} alt="Frame preview" className="w-full max-h-[70vh] object-contain rounded-lg" />
+          </div>
+        </div>
+      ) : null}
+      {deleteOpen && content ? (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
+            <h2 className="text-gray-900 font-bold mb-2">Delete this session?</h2>
+            <p className="text-sm text-gray-600">
+              This permanently deletes session <span className="font-semibold">S-{content.session.id}</span>.
+            </p>
+            <div className="flex gap-3 mt-5">
+              <button
+                type="button"
+                onClick={() => setDeleteOpen(false)}
+                disabled={deletePending}
+                className="flex-1 border border-gray-200 text-gray-700 hover:bg-gray-50 py-2 rounded-md text-sm font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={onDeleteSession}
+                disabled={deletePending}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-md text-sm font-semibold transition-colors"
+              >
+                {deletePending ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -493,24 +711,24 @@ function InfoCard({ label, value }: { label: string; value: number | string | nu
   );
 }
 
-function ratingToOutOf10(rating1to9: number | null) {
+function ratingToOutOf9(rating1to9: number | null) {
   if (rating1to9 == null) return 0;
-  return (rating1to9 / 9) * 10;
+  return rating1to9;
 }
 
-function formatRatingOutOf10(rating1to9: number | null) {
-  return Math.round(ratingToOutOf10(rating1to9));
+function formatRatingOutOf9(rating1to9: number | null) {
+  return Math.round(ratingToOutOf9(rating1to9));
 }
 
 function RatingRow({ label, rating }: { label: string; rating: number | null }) {
-  const outOf10 = ratingToOutOf10(rating);
-  const pct = clampPct((outOf10 / 10) * 100);
+  const outOf9 = ratingToOutOf9(rating);
+  const pct = clampPct((outOf9 / 9) * 100);
   return (
     <div className="mb-3">
       <div className="flex items-center justify-between mb-2">
         <p className="text-[12px] text-gray-700 font-semibold">{label}</p>
         <p className="text-[12px] text-gray-600 font-semibold">
-          {formatRatingOutOf10(rating)} / 10
+          {formatRatingOutOf9(rating)} / 9
         </p>
       </div>
       <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
