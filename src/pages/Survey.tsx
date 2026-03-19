@@ -4,7 +4,7 @@ import logo from "../assets/logo.png";
 
 const API_BASE = "http://localhost:5000";
 
-const RATING_OPTIONS = [3, 4, 5, 6, 7, 8, 9] as const;
+const RATING_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
 type Food = {
   id: number;
@@ -115,8 +115,6 @@ export default function Survey() {
   });
 
   const [remarks, setRemarks] = useState("");
-  const [ageInput, setAgeInput] = useState<string>("");
-  const [genderInput, setGenderInput] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
 
   const productTitle = food?.name ?? "TS-67 TS Dinosaur Blend Savory Paste";
@@ -145,12 +143,6 @@ export default function Survey() {
       return;
     }
 
-    const ageInt =
-      ageInput.trim().length === 0 ? null : Number.isFinite(Number(ageInput)) ? Math.round(Number(ageInput)) : null;
-
-    const genderVal =
-      genderInput.trim().length === 0 ? null : (genderInput.trim() as "male" | "female" | "other");
-
     setSubmitting(true);
     setError(null);
     try {
@@ -158,8 +150,6 @@ export default function Survey() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          age: ageInt,
-          gender: genderVal,
           colorRating: ratings.color,
           flavorAromaRating: ratings.flavorAroma,
           saltSweetRating: ratings.saltSweet,
@@ -213,7 +203,7 @@ export default function Survey() {
       <main className="px-6 py-10">
         <div className="max-w-4xl mx-auto">
           <div className="bg-white px-8 py-6 rounded-[10px] mb-6 text-center border border-gray-200">
-            <h1 className="text-[18px] sm:text-[22px] font-bold text-gray-900">
+            <h1 className="text-[26px] font-bold text-gray-900">
               Hedonic Sensory Evaluation Form
             </h1>
           </div>
@@ -272,42 +262,6 @@ export default function Survey() {
             </div>
 
             <div className="p-6">
-              <div className="mb-6">
-                <div className="flex items-center justify-between gap-4 mb-3">
-                  <p className="text-[12px] font-bold text-gray-700 uppercase tracking-wide">Demographics (optional)</p>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-[12px] font-bold text-gray-700 uppercase tracking-wide mb-2">Age</p>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      value={ageInput}
-                      onChange={(e) => setAgeInput(e.target.value)}
-                      placeholder="e.g. 23"
-                      className="w-full border border-gray-300 rounded-md px-3 py-2.5 text-[14px] text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 focus:border-[#e8174a]"
-                      min={0}
-                      max={120}
-                    />
-                  </div>
-
-                  <div>
-                    <p className="text-[12px] font-bold text-gray-700 uppercase tracking-wide mb-2">Gender</p>
-                    <select
-                      value={genderInput}
-                      onChange={(e) => setGenderInput(e.target.value)}
-                      className="w-full border border-gray-300 rounded-md px-3 py-2.5 text-[14px] text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 focus:border-[#e8174a]"
-                    >
-                      <option value="">Prefer not to say</option>
-                      <option value="male">Male</option>
-                      <option value="female">Female</option>
-                      <option value="other">Other</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
               <div className="mb-2">
                 <p className="text-[12px] font-bold text-gray-700 uppercase tracking-wide">REMARKS</p>
               </div>
