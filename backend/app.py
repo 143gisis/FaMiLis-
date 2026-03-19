@@ -22,13 +22,22 @@ from __future__ import annotations
 
 import threading
 import time
+import os
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict, Optional
 
 import cv2
 import numpy as np
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+try:
+    import pymysql
+except Exception:  # pragma: no cover - optional runtime dependency
+    pymysql = None
 
 
 # ---------------------------
@@ -43,6 +52,10 @@ ALLOWED_ORIGINS = [
 
 CAMERA_INDEX = 0
 PROCESS_FPS = 8  # 5-10 is enough for a capstone
+FRAME_SAVE_EVERY_N = 3
+FASTAPI_PUBLIC_BASE = os.getenv("FASTAPI_PUBLIC_BASE", "http://localhost:5001")
+FRAME_UPLOAD_DIR = Path(__file__).resolve().parent / "uploads" / "frames"
+FRAME_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 HEDONIC_LABELS = {
     9: "Like Extremely",
@@ -210,6 +223,7 @@ class LatestEmotion:
 
 _state_lock = threading.Lock()
 _latest: Optional[LatestEmotion] = None
+_active_session_id: Optional[int] = None
 
 
 def write_latest(has_face: bool, emotions: Dict[str, float], valence: float, arousal: float):
@@ -228,6 +242,59 @@ def write_latest(has_face: bool, emotions: Dict[str, float], valence: float, aro
 
     with _state_lock:
         _latest = item
+
+
+def _db_conn():
+    if pymysql is None:
+        return None
+    try:
+        return pymysql.connect(
+            host=os.getenv("MYSQL_HOST", "localhost"),
+            user=os.getenv("MYSQL_USER", "root"),
+            password=os.getenv("MYSQL_PASSWORD", ""),
+            database=os.getenv("MYSQL_DATABASE", "familis_db"),
+            port=int(os.getenv("MYSQL_PORT", "3306")),
+            autocommit=True,
+            cursorclass=pymysql.cursors.Cursor,
+        )
+    except Exception:
+        return None
+
+
+def write_frame_log(
+    session_id: int,
+    has_face: bool,
+    confidence_score: float,
+    hedonic_score: float,
+    frame_image_url: str,
+) -> None:
+    conn = _db_conn()
+    if conn is None:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO frame_logs
+                (session_id, timestamp, face_detected, confidence_score, hedonic_score, frame_image_url)
+                VALUES (%s, NOW(), %s, %s, %s, %s)
+                """,
+                (
+                    session_id,
+                    1 if has_face else 0,
+                    float(clamp(confidence_score, 0.0, 1.0)),
+                    float(clamp(hedonic_score, 0.0, 1.0)),
+                    frame_image_url,
+                ),
+            )
+    except Exception:
+        # Keep capture loop resilient even if DB write fails.
+        return
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # ---------------------------
@@ -259,6 +326,7 @@ class CaptureWorker:
             return
 
         frame_delay = 1.0 / max(1, PROCESS_FPS)
+        frame_counter = 0
 
         while not self._stop_evt.is_set():
             ok, frame = cap.read()
@@ -272,6 +340,23 @@ class CaptureWorker:
             has_face = probs.get("neutral", 1.0) < 0.999
             valence, arousal = compute_valence_arousal(probs)
             write_latest(has_face, probs, valence, arousal)
+            frame_counter += 1
+
+            if _active_session_id and (frame_counter % FRAME_SAVE_EVERY_N == 0):
+                filename = f"s{_active_session_id}-{now_ms()}.jpg"
+                output_path = FRAME_UPLOAD_DIR / filename
+                try:
+                    cv2.imwrite(str(output_path), frame)
+                    public_url = f"{FASTAPI_PUBLIC_BASE}/uploads/frames/{filename}"
+                    write_frame_log(
+                        session_id=_active_session_id,
+                        has_face=has_face,
+                        confidence_score=max(probs.values()) if probs else 0.0,
+                        hedonic_score=valence_to_hedonic(valence) / 9.0,
+                        frame_image_url=public_url,
+                    )
+                except Exception:
+                    pass
 
             time.sleep(frame_delay)
 
@@ -286,6 +371,7 @@ _worker = CaptureWorker()
 # ---------------------------
 
 app = FastAPI(title="FaMiLis Emotion Backend", version="1.0.0")
+app.mount("/uploads", StaticFiles(directory=str(FRAME_UPLOAD_DIR.parent)), name="uploads")
 
 app.add_middleware(
     CORSMiddleware,
@@ -332,3 +418,19 @@ def emotion_latest():
         "hedonicScore": item.hedonicScore,
         "hedonicLabel": item.hedonicLabel,
     }
+
+
+@app.post("/capture/session/{session_id}")
+def capture_set_session(session_id: int):
+    global _active_session_id
+    if session_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid session_id")
+    _active_session_id = session_id
+    return {"ok": True, "activeSessionId": _active_session_id}
+
+
+@app.post("/capture/session/clear")
+def capture_clear_session():
+    global _active_session_id
+    _active_session_id = None
+    return {"ok": True, "activeSessionId": None}
