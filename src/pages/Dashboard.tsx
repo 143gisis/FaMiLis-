@@ -42,6 +42,7 @@ type Food = {
   id: number;
   name: string;
   category: string;
+  imageUrl: string | null;
   createdAt: string | null;
   sessionsTotal: number;
   sessionsActive: number;
@@ -57,6 +58,9 @@ type Analytics = {
   byAge: { label: string; score: number }[];
   byGender: { label: string; score: number }[];
   sampleSize: number;
+  sessionCount: number;
+  frameLogCount: number;
+  surveyCount: number;
 };
 
 function clampPct(n: number) {
@@ -83,6 +87,11 @@ function statusClasses(status: SessionStatus) {
 }
 
 const API_BASE = "http://localhost:5000";
+const toApiUrl = (url: string | null) => {
+  if (!url) return null;
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  return `${API_BASE}${url}`;
+};
 
 function formatDateTime(iso: string | null) {
   if (!iso) return "-";
@@ -109,6 +118,7 @@ export default function Dashboard() {
     name: "",
     category: "",
   });
+  const [newFoodImageFile, setNewFoodImageFile] = useState<File | null>(null);
   const [sessionsByFoodId, setSessionsByFoodId] = useState<Record<number, Session[]>>({});
   const [analyticsByFoodId, setAnalyticsByFoodId] = useState<Record<number, Analytics>>({});
   const [foodsLoading, setFoodsLoading] = useState(true);
@@ -116,6 +126,9 @@ export default function Dashboard() {
   const [sessionsLoading, setSessionsLoading] = useState<Record<number, boolean>>({});
   const [analyticsLoading, setAnalyticsLoading] = useState<Record<number, boolean>>({});
   const [statsError, setStatsError] = useState<string | null>(null);
+  const [foodToDelete, setFoodToDelete] = useState<Food | null>(null);
+  const [deletingFoodId, setDeletingFoodId] = useState<number | null>(null);
+  const [deleteFoodError, setDeleteFoodError] = useState<string | null>(null);
   const foodsAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -211,6 +224,9 @@ export default function Dashboard() {
         byAge: [],
         byGender: [],
         sampleSize: 0,
+        sessionCount: 0,
+        frameLogCount: 0,
+        surveyCount: 0,
       };
     }
     return (
@@ -237,9 +253,42 @@ export default function Dashboard() {
         byAge: [],
         byGender: [],
         sampleSize: 0,
+        sessionCount: 0,
+        frameLogCount: 0,
+        surveyCount: 0,
       }
     );
   }, [selectedFood, analyticsByFoodId]);
+
+  const analyticsIssues = useMemo(() => {
+    const issues: string[] = [];
+    const sessionCount = Number(stats.sessionCount ?? 0);
+    const frameLogCount = Number(stats.frameLogCount ?? 0);
+    const surveyCount = Number(stats.surveyCount ?? 0);
+    if (!selectedFood) {
+      issues.push("Select a food product to view analytics.");
+      return issues;
+    }
+    if (sessionCount <= 0) {
+      issues.push("No sessions yet for this food product.");
+    }
+    if (frameLogCount <= 0) {
+      issues.push("No frame logs found. FER charts may be empty.");
+    }
+    if (surveyCount <= 0) {
+      issues.push("No survey submissions yet. Survey-based charts may be empty.");
+    }
+    return issues;
+  }, [selectedFood, stats.frameLogCount, stats.sessionCount, stats.surveyCount]);
+
+  // Hide analytics visuals when critical data is missing
+  const hideAnalyticsGraphs = useMemo(() => {
+    if (!selectedFood) return true;
+    const sessionCount = Number(stats.sessionCount ?? 0);
+    const frameLogCount = Number(stats.frameLogCount ?? 0);
+    const surveyCount = Number(stats.surveyCount ?? 0);
+    return sessionCount <= 0 || frameLogCount <= 0 || surveyCount <= 0;
+  }, [selectedFood, stats.sessionCount, stats.frameLogCount, stats.surveyCount]);
 
   const radarChartData = useMemo(() => {
     const labels = stats.radar.map((r) => r.label);
@@ -271,16 +320,16 @@ export default function Dashboard() {
         legend: { display: false },
         tooltip: {
           callbacks: {
-            label: (ctx: any) => `${ctx.label}: ${Number(ctx.raw ?? 0).toFixed(1)} / 10`,
+            label: (ctx: any) => `${ctx.label}: ${Number(ctx.raw ?? 0).toFixed(1)} / 9`,
           },
         },
       },
       scales: {
         r: {
           min: 0,
-          max: 10,
+          max: 9,
           ticks: {
-            stepSize: 2,
+            stepSize: 1,
             showLabelBackdrop: false,
             color: "#9ca3af",
             font: { size: 10 },
@@ -333,7 +382,7 @@ export default function Dashboard() {
         legend: { display: false },
         tooltip: {
           callbacks: {
-            label: (ctx: any) => `${Number(ctx.raw ?? 0).toFixed(1)} / 10`,
+            label: (ctx: any) => `${Number(ctx.raw ?? 0).toFixed(1)} / 9`,
           },
         },
       },
@@ -345,7 +394,7 @@ export default function Dashboard() {
         },
         y: {
           min: 0,
-          max: 10,
+          max: 9,
           ticks: { stepSize: 1, color: "#9ca3af", font: { size: 11 } },
           grid: { color: "rgba(156, 163, 175, 0.25)" },
           border: { color: "rgba(156, 163, 175, 0.35)" },
@@ -372,6 +421,8 @@ export default function Dashboard() {
 
   const onDeleteFood = async (foodId: number) => {
     try {
+      setDeletingFoodId(foodId);
+      setDeleteFoodError(null);
       const res = await fetch(`${API_BASE}/api/foods/${foodId}`, { method: "DELETE" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json?.ok) {
@@ -384,7 +435,10 @@ export default function Dashboard() {
         return remaining[0]?.id ?? null;
       });
     } catch (err) {
-      console.error(err);
+      setDeleteFoodError((err as any)?.message || "Failed to delete food.");
+    } finally {
+      setDeletingFoodId(null);
+      setFoodToDelete(null);
     }
   };
 
@@ -404,10 +458,24 @@ export default function Dashboard() {
         throw new Error(json?.error || "Failed to add food.");
       }
       const created = json.food as { id: number; name: string; category: string; createdAt: string };
+      let uploadedImageUrl: string | null = null;
+      if (newFoodImageFile) {
+        const fd = new FormData();
+        fd.append("image", newFoodImageFile);
+        const imgRes = await fetch(`${API_BASE}/api/foods/${created.id}/image`, {
+          method: "POST",
+          body: fd,
+        });
+        const imgJson = await imgRes.json().catch(() => null);
+        if (imgRes.ok && imgJson?.ok) {
+          uploadedImageUrl = String(imgJson.imageUrl ?? "");
+        }
+      }
       const newRow: Food = {
         id: created.id,
         name: created.name,
         category: created.category,
+        imageUrl: uploadedImageUrl,
         createdAt: created.createdAt,
         sessionsTotal: 0,
         sessionsActive: 0,
@@ -418,6 +486,7 @@ export default function Dashboard() {
       setShowAdd(false);
       setTab("food");
       setNewFood({ name: "", category: "" });
+      setNewFoodImageFile(null);
     } catch (err) {
       console.error(err);
     }
@@ -455,7 +524,7 @@ export default function Dashboard() {
         <div className="max-w-3xl mx-auto">
           {/* Title */}
           <div className="text-center mb-6">
-            <h1 className="text-[22px] font-bold text-gray-900">Food Testing Hub</h1>
+            <h1 className="text-[26px] font-bold text-gray-900">Food Testing Hub</h1>
             <p className="text-[12px] text-gray-500 mt-1">Add and Manage Food for Testing</p>
           </div>
 
@@ -524,7 +593,20 @@ export default function Dashboard() {
                           <div className="min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                               <p className="text-[14px] font-semibold text-gray-900 truncate">
-                                {food.name}
+                                <span className="inline-flex items-center gap-2">
+                                  {food.imageUrl ? (
+                                    <img
+                                      src={toApiUrl(food.imageUrl) ?? undefined}
+                                      alt={food.name}
+                                      className="w-8 h-8 rounded-md border border-gray-200 object-cover"
+                                    />
+                                  ) : (
+                                    <span className="w-8 h-8 rounded-md border border-dashed border-gray-300 bg-gray-50 inline-flex items-center justify-center text-[10px] text-gray-400">
+                                      IMG
+                                    </span>
+                                  )}
+                                  <span className="truncate">{food.name}</span>
+                                </span>
                               </p>
                               <Badge
                                 className={
@@ -558,7 +640,7 @@ export default function Dashboard() {
                             <div className="flex items-center gap-4 mt-3">
                               <button
                                 type="button"
-                                onClick={() => onDeleteFood(food.id)}
+                                onClick={() => setFoodToDelete(food)}
                                 className="text-[12px] font-semibold text-[#e8174a] hover:text-[#c9143f] transition-colors inline-flex items-center gap-1"
                               >
                                 <span aria-hidden="true">🗑️</span>
@@ -686,197 +768,214 @@ export default function Dashboard() {
                     Failed to load analytics. <span className="text-gray-400">{statsError}</span>
                   </div>
                 ) : null}
-                {/* A */}
-                <div>
-                  <h3 className="text-[13px] font-bold text-gray-900 mb-1">
-                    A. Frame-by-Frame Hedonic Score Distribution Report
-                  </h3>
-                  <p className="text-[12px] text-gray-500 mb-4">
-                    Do consumers like this product?
-                  </p>
+                {analyticsIssues.length > 0 ? (
+                  <div className="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                    {analyticsIssues.join(" ")}
+                  </div>
+                ) : null}
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-3">
-                      <MetricCard title="Mean Hedonic Scale" subtitle="Out of 10">
-                        <p className="text-[44px] leading-none font-bold text-[#e8174a]">
-                          {stats.meanHedonic.toFixed(1)}
-                        </p>
-                      </MetricCard>
+                {hideAnalyticsGraphs ? (
+                  <div className="text-[12px] text-gray-600 bg-gray-50 border border-gray-200 rounded-md px-3 py-2">
+                    Graphs are hidden until required analytics data is available.
+                  </div>
+                ) : (
+                  <>
+                    {/* A */}
+                    <div>
+                      <h3 className="text-[13px] font-bold text-gray-900 mb-1">
+                        A. Frame-by-Frame Hedonic Score Distribution Report
+                      </h3>
+                      <p className="text-[12px] text-gray-500 mb-4">
+                        Do consumers like this product?
+                      </p>
 
-                      <MetricCard title="Mean FER Confidence Level" subtitle="">
-                        <div className="flex items-end justify-between gap-3">
-                          <p className="text-[40px] leading-none font-bold text-gray-900">
-                            {Math.round(stats.meanConfidence * 100)}%
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-3">
+                          <MetricCard title="Mean Hedonic Scale" subtitle="Out of 9">
+                            <p className="text-[44px] leading-none font-bold text-[#e8174a]">
+                              {stats.meanHedonic.toFixed(1)}
+                            </p>
+                          </MetricCard>
+
+                          <MetricCard title="Mean FER Confidence Level" subtitle="">
+                            <div className="flex items-end justify-between gap-3">
+                              <p className="text-[40px] leading-none font-bold text-gray-900">
+                                {Math.round(stats.meanConfidence * 100)}%
+                              </p>
+                              <p className="text-[12px] text-gray-500">(from frame logs)</p>
+                            </div>
+                            <div className="mt-2 h-2 bg-gray-200 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-[#e8174a]"
+                                style={{
+                                  width: `${clampPct(stats.meanConfidence * 100)}%`,
+                                }}
+                              />
+                            </div>
+                          </MetricCard>
+                        </div>
+
+                        <div>
+                          <p className="text-[12px] text-gray-600 mb-2 text-center">
+                            Reaction Distribution
                           </p>
-                          <p className="text-[12px] text-gray-500">(from frame logs)</p>
-                        </div>
-                        <div className="mt-2 h-2 bg-gray-200 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-[#e8174a]"
-                            style={{
-                              width: `${clampPct(stats.meanConfidence * 100)}%`,
-                            }}
-                          />
-                        </div>
-                      </MetricCard>
-                    </div>
-
-                    <div>
-                      <p className="text-[12px] text-gray-600 mb-2 text-center">
-                        Reaction Distribution
-                      </p>
-                      <div className="flex items-center justify-center">
-                        <div
-                          className="w-[190px] h-[190px] rounded-full border border-gray-100 shadow-sm"
-                          style={{
-                            background: `conic-gradient(${stats.distribution
-                              .map((d, i) => {
-                                const start =
-                                  i === 0
-                                    ? 0
-                                    : stats.distribution
-                                        .slice(0, i)
-                                        .reduce((a, b) => a + b.value, 0);
-                                const end = start + d.value;
-                                return `${d.color} ${start}% ${end}%`;
-                              })
-                              .join(", ")})`,
-                          }}
-                          aria-label="Pie chart"
-                        />
-                      </div>
-
-                      <div className="mt-3 space-y-1">
-                        {stats.distribution.map((d) => (
-                          <div key={d.label} className="flex items-center gap-2 text-[12px]">
-                            <span
-                              className="w-3 h-3 rounded-full"
-                              style={{ backgroundColor: d.color }}
-                              aria-hidden="true"
-                            />
-                            <span className="text-gray-600">
-                              {d.label}: {d.value}%
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* B */}
-                <div className="border-t border-gray-100 pt-6">
-                  <h3 className="text-[13px] font-bold text-gray-900 mb-1">
-                    B. Survey-Based Attribute Radar Report
-                  </h3>
-                  <p className="text-[12px] text-gray-500 mb-4">
-                    What consumers like about the product (based on session survey logs)
-                  </p>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
-                      <p className="text-[12px] text-gray-700 font-semibold mb-2">Spider chart</p>
-                      <div className="h-[240px]">
-                        <Radar data={radarChartData as any} options={radarChartOptions as any} />
-                      </div>
-                    </div>
-
-                    <div className="space-y-3">
-                      {stats.radar.map((r) => (
-                        <div key={r.label}>
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-[12px] text-gray-600">{r.label}</span>
-                            <span className="text-[12px] text-gray-900 font-semibold">
-                              {r.score.toFixed(1)} / 10
-                            </span>
-                          </div>
-                          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                          <div className="flex items-center justify-center">
                             <div
-                              className="h-full bg-[#e8174a]"
-                              style={{ width: `${clampPct((r.score / 10) * 100)}%` }}
+                              className="w-[190px] h-[190px] rounded-full border border-gray-100 shadow-sm"
+                              style={{
+                                background:
+                                  Number(stats.frameLogCount ?? 0) <= 0
+                                    ? "conic-gradient(#e5e7eb 0% 100%)"
+                                    : `conic-gradient(${stats.distribution
+                                        .map((d, i) => {
+                                          const start =
+                                            i === 0
+                                              ? 0
+                                              : stats.distribution
+                                                  .slice(0, i)
+                                                  .reduce((a, b) => a + b.value, 0);
+                                          const end = start + d.value;
+                                          return `${d.color} ${start}% ${end}%`;
+                                        })
+                                        .join(", ")})`,
+                              }}
+                              aria-label="Pie chart"
                             />
                           </div>
+
+                          <div className="mt-3 space-y-1">
+                            {stats.distribution.map((d) => (
+                              <div key={d.label} className="flex items-center gap-2 text-[12px]">
+                                <span
+                                  className="w-3 h-3 rounded-full"
+                                  style={{ backgroundColor: d.color }}
+                                  aria-hidden="true"
+                                />
+                                <span className="text-gray-600">
+                                  {d.label}: {d.value}%
+                                </span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* C */}
-                <div className="border-t border-gray-100 pt-6">
-                  <h3 className="text-[13px] font-bold text-gray-900 mb-1">
-                    C. FER Timeline Report
-                  </h3>
-                  <p className="text-[12px] text-gray-500 mb-4">
-                    Emotion over time during testing
-                  </p>
-
-                  <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
-                    <div className="h-[190px]">
-                      <Line data={lineChartData as any} options={lineChartOptions as any} />
-                    </div>
-                  </div>
-                </div>
-
-                {/* D */}
-                <div className="border-t border-gray-100 pt-6">
-                  <h3 className="text-[13px] font-bold text-gray-900 mb-1">
-                    D. Demographics Report
-                  </h3>
-                  <p className="text-[12px] text-gray-500 mb-4">
-                    Consumer profile and survey-based hedonic scores
-                  </p>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <p className="text-[12px] text-gray-700 font-semibold mb-3">
-                        Hedonic Score by Age Group
-                      </p>
-                      <div className="space-y-2">
-                        {stats.byAge.map((a) => (
-                          <div key={a.label}>
-                            <div className="flex items-center justify-between text-[12px] mb-1">
-                              <span className="text-gray-600">{a.label}</span>
-                              <span className="text-gray-900 font-semibold">
-                                {a.score.toFixed(1)}
-                              </span>
-                            </div>
-                            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-[#e8174a]"
-                                style={{ width: `${clampPct((a.score / 10) * 100)}%` }}
-                              />
-                            </div>
-                          </div>
-                        ))}
                       </div>
                     </div>
 
-                    <div>
-                      <p className="text-[12px] text-gray-700 font-semibold mb-3">
-                        Hedonic Score by Gender
+                    {/* B */}
+                    <div className="border-t border-gray-100 pt-6">
+                      <h3 className="text-[13px] font-bold text-gray-900 mb-1">
+                        B. Survey-Based Attribute Radar Report
+                      </h3>
+                      <p className="text-[12px] text-gray-500 mb-4">
+                        What consumers like about the product (based on session survey logs)
                       </p>
-                      <div className="space-y-2">
-                        {stats.byGender.map((g) => (
-                          <div key={g.label}>
-                            <div className="flex items-center justify-between text-[12px] mb-1">
-                              <span className="text-gray-600">{g.label}</span>
-                              <span className="text-gray-900 font-semibold">
-                                {g.score.toFixed(1)}
-                              </span>
-                            </div>
-                            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-[#e8174a]"
-                                style={{ width: `${clampPct((g.score / 10) * 100)}%` }}
-                              />
-                            </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
+                          <p className="text-[12px] text-gray-700 font-semibold mb-2">Spider chart</p>
+                          <div className="h-[240px]">
+                            <Radar data={radarChartData as any} options={radarChartOptions as any} />
                           </div>
-                        ))}
+                        </div>
+
+                        <div className="space-y-3">
+                          {stats.radar.map((r) => (
+                            <div key={r.label}>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-[12px] text-gray-600">{r.label}</span>
+                                <span className="text-[12px] text-gray-900 font-semibold">
+                                  {r.score.toFixed(1)} / 9
+                                </span>
+                              </div>
+                              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-[#e8174a]"
+                                  style={{ width: `${clampPct((r.score / 9) * 100)}%` }}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </div>
+
+                    {/* C */}
+                    <div className="border-t border-gray-100 pt-6">
+                      <h3 className="text-[13px] font-bold text-gray-900 mb-1">
+                        C. FER Timeline Report
+                      </h3>
+                      <p className="text-[12px] text-gray-500 mb-4">
+                        Emotion over time during testing
+                      </p>
+
+                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
+                        <div className="h-[190px]">
+                          <Line data={lineChartData as any} options={lineChartOptions as any} />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* D */}
+                    <div className="border-t border-gray-100 pt-6">
+                      <h3 className="text-[13px] font-bold text-gray-900 mb-1">
+                        D. Demographics Report
+                      </h3>
+                      <p className="text-[12px] text-gray-500 mb-4">
+                        Consumer profile and survey-based hedonic scores
+                      </p>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                          <p className="text-[12px] text-gray-700 font-semibold mb-3">
+                            Hedonic Score by Age Group
+                          </p>
+                          <div className="space-y-2">
+                            {stats.byAge.map((a) => (
+                              <div key={a.label}>
+                                <div className="flex items-center justify-between text-[12px] mb-1">
+                                  <span className="text-gray-600">{a.label}</span>
+                                  <span className="text-gray-900 font-semibold">
+                                    {a.score.toFixed(1)}
+                                  </span>
+                                </div>
+                                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-[#e8174a]"
+                                    style={{ width: `${clampPct((a.score / 9) * 100)}%` }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="text-[12px] text-gray-700 font-semibold mb-3">
+                            Hedonic Score by Gender
+                          </p>
+                          <div className="space-y-2">
+                            {stats.byGender.map((g) => (
+                              <div key={g.label}>
+                                <div className="flex items-center justify-between text-[12px] mb-1">
+                                  <span className="text-gray-600">{g.label}</span>
+                                  <span className="text-gray-900 font-semibold">
+                                    {g.score.toFixed(1)}
+                                  </span>
+                                </div>
+                                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-[#e8174a]"
+                                    style={{ width: `${clampPct((g.score / 9) * 100)}%` }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </section>
           )}
@@ -909,6 +1008,15 @@ export default function Dashboard() {
                   className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30"
                 />
               </Field>
+
+              <Field label="Food Image (optional)">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setNewFoodImageFile(e.target.files?.[0] ?? null)}
+                  className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30"
+                />
+              </Field>
             </div>
 
             <div className="flex gap-3 mt-5">
@@ -930,6 +1038,36 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+      {foodToDelete ? (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
+            <h2 className="text-gray-900 font-bold mb-2">Delete food?</h2>
+            <p className="text-sm text-gray-600">
+              This will permanently remove <span className="font-semibold">{foodToDelete.name}</span> and
+              its related sessions.
+            </p>
+            {deleteFoodError ? <p className="text-xs text-red-600 mt-2">{deleteFoodError}</p> : null}
+            <div className="flex gap-3 mt-5">
+              <button
+                type="button"
+                onClick={() => setFoodToDelete(null)}
+                disabled={deletingFoodId === foodToDelete.id}
+                className="flex-1 border border-gray-200 text-gray-700 hover:bg-gray-50 py-2 rounded-md text-sm font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => onDeleteFood(foodToDelete.id)}
+                disabled={deletingFoodId === foodToDelete.id}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-md text-sm font-semibold transition-colors"
+              >
+                {deletingFoodId === foodToDelete.id ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
