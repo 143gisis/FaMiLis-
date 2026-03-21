@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import { initDb } from "./init.js";
 import multer from "multer";
-import { mkdir } from "fs/promises";
+import { mkdir, readFile } from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -15,7 +15,21 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const uploadsRoot = path.resolve(__dirname, "uploads");
 const foodUploadsDir = path.join(uploadsRoot, "foods");
+const frameLogsRoot = path.join(uploadsRoot, "frame_logs");
 await mkdir(foodUploadsDir, { recursive: true });
+await mkdir(frameLogsRoot, { recursive: true });
+
+const EMOTION_SERVICE_URL = (process.env.EMOTION_SERVICE_URL || "http://127.0.0.1:8765").replace(/\/$/, "");
+
+async function clearEmotionHistory(sessionId) {
+  try {
+    await fetch(`${EMOTION_SERVICE_URL}/session/${encodeURIComponent(String(sessionId))}/history`, {
+      method: "DELETE",
+    });
+  } catch {
+    /* Python emotion service is optional at runtime */
+  }
+}
 
 const foodStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, foodUploadsDir),
@@ -38,6 +52,27 @@ const uploadFoodImage = multer({
   },
 });
 
+const frameUploadStorage = multer.diskStorage({
+  destination: (req, _file, cb) => {
+    cb(null, req._frameDir);
+  },
+  filename: (_req, _file, cb) => {
+    cb(null, `frame_${Date.now()}.jpg`);
+  },
+});
+
+const uploadSessionFrame = multer({
+  storage: frameUploadStorage,
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype?.startsWith("image/")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only image uploads are supported."));
+    }
+  },
+}).single("frame");
+
 app.use("/uploads", express.static(uploadsRoot));
 
 async function start() {
@@ -52,6 +87,22 @@ async function start() {
     return Number.isNaN(d.getTime()) ? null : d.toISOString();
   }
   const allowedSessionStatuses = new Set(["pending", "active", "completed", "cancelled"]);
+
+  async function prepareSessionFrameUpload(req, res, next) {
+    const sessionId = Number.parseInt(req.params.sessionId, 10);
+    if (!Number.isFinite(sessionId)) {
+      return res.status(400).json({ ok: false, error: "Invalid sessionId." });
+    }
+    req._frameSessionId = sessionId;
+    req._frameDir = path.join(frameLogsRoot, String(sessionId));
+    try {
+      await mkdir(req._frameDir, { recursive: true });
+      return next();
+    } catch (err) {
+      console.error("prepareSessionFrameUpload:", err);
+      return res.status(500).json({ ok: false, error: "Could not prepare upload directory." });
+    }
+  }
 
   // Simple health endpoint to verify server + DB
   app.get("/api/health", async (_req, res) => {
@@ -712,6 +763,116 @@ async function start() {
     }
   });
 
+  // Proxy: Python emotion service health (optional; used by Session UI)
+  app.get("/api/emotion/health", async (_req, res) => {
+    try {
+      const r = await fetch(`${EMOTION_SERVICE_URL}/health`);
+      const j = await r.json().catch(() => null);
+      return res.json({ ok: true, emotion: j });
+    } catch (err) {
+      console.warn("GET /api/emotion/health: emotion service unreachable:", err?.message || err);
+      return res.json({
+        ok: false,
+        emotion: null,
+        error: "Emotion service unreachable. Start backend/6.3/emotion_service.py or set EMOTION_SERVICE_URL.",
+      });
+    }
+  });
+
+  // Upload one camera frame: save image, run 6.3 inference, insert frame_logs
+  app.post(
+    "/api/sessions/:sessionId/frames",
+    prepareSessionFrameUpload,
+    (req, res, next) => {
+      uploadSessionFrame(req, res, (err) => {
+        if (err) {
+          return res.status(400).json({ ok: false, error: err.message || "Upload failed." });
+        }
+        next();
+      });
+    },
+    async (req, res) => {
+      const sessionId = req._frameSessionId;
+      if (!req.file?.path) {
+        return res.status(400).json({ ok: false, error: "Missing frame (multipart field name: frame)." });
+      }
+
+      try {
+        const [[sess]] = await pool.query(`SELECT status FROM sessions WHERE session_id = ? LIMIT 1`, [sessionId]);
+        if (!sess) {
+          return res.status(404).json({ ok: false, error: "Session not found." });
+        }
+        if (sess.status !== "active") {
+          return res.status(409).json({ ok: false, error: "Session is not active; cannot record frames." });
+        }
+
+        let faceDetected = null;
+        let hedonic = null;
+        let conf = null;
+        let inferenceOk = false;
+        let inferenceError = null;
+        let sentiment = null;
+        let valence1to9 = null;
+
+        try {
+          const buf = await readFile(req.file.path);
+          const fd = new FormData();
+          fd.append("session_id", String(sessionId));
+          fd.append(
+            "image",
+            new Blob([buf], { type: req.file.mimetype || "image/jpeg" }),
+            req.file.filename || "frame.jpg"
+          );
+          const predRes = await fetch(`${EMOTION_SERVICE_URL}/predict`, { method: "POST", body: fd });
+          const predJson = await predRes.json().catch(() => null);
+          if (predRes.ok && predJson && predJson.ok === true) {
+            inferenceOk = true;
+            sentiment = predJson.sentiment == null ? null : String(predJson.sentiment);
+            valence1to9 = typeof predJson.valence1to9 === "number" ? predJson.valence1to9 : null;
+            if (predJson.faceDetected === true) {
+              faceDetected = true;
+              hedonic = typeof predJson.hedonicScore === "number" ? predJson.hedonicScore : null;
+              conf = typeof predJson.confidenceScore === "number" ? predJson.confidenceScore : null;
+            } else if (predJson.faceDetected === false) {
+              faceDetected = false;
+            }
+          } else {
+            inferenceError =
+              (predJson && predJson.error) || `Emotion service HTTP ${predRes.status}`;
+          }
+        } catch (err) {
+          inferenceError = err?.message || String(err);
+          console.warn("Frame inference error:", inferenceError);
+        }
+
+        const relUrl = `/uploads/frame_logs/${sessionId}/${req.file.filename}`;
+        const [insertResult] = await pool.query(
+          `
+          INSERT INTO frame_logs (session_id, timestamp, face_detected, confidence_score, hedonic_score, frame_image_url)
+          VALUES (?, NOW(), ?, ?, ?, ?)
+        `,
+          [sessionId, faceDetected, conf, hedonic, relUrl]
+        );
+
+        return res.json({
+          ok: true,
+          frameLogId: Number(insertResult.insertId),
+          frameImageUrl: relUrl,
+          faceDetected,
+          confidenceScore: conf,
+          hedonicScore: hedonic,
+          sentiment,
+          valence1to9,
+          inferenceOk,
+          inferenceError,
+        });
+      } catch (err) {
+        console.error("POST /api/sessions/:sessionId/frames error:", err);
+        return res.status(500).json({ ok: false, error: "Server error." });
+      }
+    }
+  );
+
   // Full session detail for the results page (frame logs, system logs, survey results)
   app.get("/api/sessions/:sessionId/details", async (req, res) => {
     const sessionId = Number.parseInt(req.params.sessionId, 10);
@@ -905,6 +1066,8 @@ async function start() {
       `,
         [sessionId]
       );
+
+      void clearEmotionHistory(sessionId);
 
       return res.json({
         ok: true,

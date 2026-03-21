@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "server": "node ./server/server.js"
+    "server": "node ./server/server.js",
+    "emotion-service": "python ./backend/6.3/emotion_service.py"
   },
   "dependencies": {
     "chart.js": "^4.5.1",

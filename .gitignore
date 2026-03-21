@@ -7,7 +7,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-backend
+backend/old
 node_modules
 package-lock.json
 dist

@@ -8,7 +8,7 @@ USE familis_db;
 -- USERS (staff/admin operators)
 CREATE TABLE IF NOT EXISTS users (
   user_id INT AUTO_INCREMENT PRIMARY KEY,
-  username VARCHAR(50) NOT NULL UNIQUE,
+  username VARCHAR(50) NOT NULL,
   email VARCHAR(255) NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   role ENUM('staff', 'admin') NOT NULL DEFAULT 'staff',
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- FRAME LOGS
 CREATE TABLE IF NOT EXISTS frame_logs (
   frame_log_id INT AUTO_INCREMENT PRIMARY KEY,
-  session_id INT NOT NULL,
+  session_id INT NOT NULL,  
   timestamp TIMESTAMP NOT NULL,
   face_detected BOOLEAN,
   confidence_score FLOAT,
@@ -124,3 +124,4 @@ CREATE TABLE IF NOT EXISTS survey_results (
 -- sessions             1 ──▶ M frame_logs
 -- sessions             1 ──▶ M system_logs
 -- sessions             1 ──▶ 1 survey_results
+

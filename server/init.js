@@ -61,6 +61,9 @@ export async function initDb() {
    * - Replace hard-coded IDs if your DB already has rows.
    * - `hedonic_score` / `confidence_score` are 0..1.
    * - Survey ratings are 1..9 (converted to /10 in dashboard).
+   * - Live FER during Session: run `python backend/6.3/emotion_service.py` (after `pip install -r
+   *   backend/6.3/requirements.txt` and training `*.pkl` models). Optional env on the Node server:
+   *   `EMOTION_SERVICE_URL` (default http://127.0.0.1:8765). Frames are stored under `server/uploads/frame_logs/`.
    */
   /*
   -- Food products
