@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { performLogout } from "../RequireAuth";
 import logo from "../assets/logo.png";
 import {
   Chart as ChartJS,
@@ -512,7 +513,7 @@ export default function Dashboard() {
 
           <button
             type="button"
-            onClick={() => navigate("/")}
+            onClick={() => performLogout(navigate)}
             className="bg-white/90 text-red-700 hover:bg-white transition-colors px-4 py-2 rounded-md text-sm font-semibold"
           >
             Log Out

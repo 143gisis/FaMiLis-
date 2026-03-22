@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { performLogout } from "../RequireAuth";
 import logo from "../assets/logo.png";
 
 const API_BASE = "http://localhost:5000";
@@ -365,7 +366,7 @@ export default function Session() {
             type="button"
             onClick={() => {
               stopCamera();
-              navigate("/");
+              performLogout(navigate);
             }}
             className="bg-white/90 text-red-700 hover:bg-white transition-colors px-4 py-2 rounded-md text-sm font-semibold"
           >

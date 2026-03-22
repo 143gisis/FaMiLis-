@@ -1,6 +1,7 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import { hasStoredUser } from "../RequireAuth";
 import logo from "../assets/logo.png";
 import loginBg from "../assets/login-bg.png";
 
@@ -94,6 +95,12 @@ export default function Login() {
   const navigate = useNavigate();
   const emailId = useId();
   const passwordId = useId();
+
+  useEffect(() => {
+    if (hasStoredUser()) {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [navigate]);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

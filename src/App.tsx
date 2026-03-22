@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 
+import RequireAuth from "./RequireAuth";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Setup from "./pages/Setup";
@@ -12,11 +13,13 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Login />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/setup" element={<Setup />} />
-        <Route path="/session" element={<Session />} />
-        <Route path="/session-detail" element={<SessionDetail />} />
-        <Route path="/survey" element={<Survey />} />
+        <Route element={<RequireAuth />}>
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/setup" element={<Setup />} />
+          <Route path="/session" element={<Session />} />
+          <Route path="/session-detail" element={<SessionDetail />} />
+          <Route path="/survey" element={<Survey />} />
+        </Route>
       </Routes>
     </BrowserRouter>
   );
