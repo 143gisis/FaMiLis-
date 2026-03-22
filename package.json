@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "server": "node ./server/server.js",
-    "emotion-service": "python ./backend/6.4/emotion_service.py"
+    "emotion-service": "python ./backend/emotion_service.py"
   },
   "dependencies": {
     "chart.js": "^4.5.1",
