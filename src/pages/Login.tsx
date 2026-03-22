@@ -258,22 +258,6 @@ export default function Login() {
                 <IconLogin size={28} className="text-white" />
                 <span>{loading ? "Logging in..." : "Login"}</span>
               </button>
-
-              <p
-                className="text-center mt-8 text-[18px]"
-                style={{ fontFamily: "'Roboto', sans-serif" }}
-              >
-                <span className="text-black/50">
-                  Don&apos;t have an account yet?{" "}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => navigate("/")}
-                  className="text-red-600 hover:underline font-medium"
-                >
-                  Register here
-                </button>
-              </p>
             </form>
           </div>
         </div>
