@@ -2,7 +2,7 @@
 
 FaMiLis is a food testing prototype that combines session-based camera capture, a 9-point hedonic survey, and analytics for product evaluation.
 
-The system currently has a React frontend, a Node/Express API with MySQL, and an optional FastAPI capture service for frame-level FER logging.
+The frontend system currently has a frontend, a Node/Express API with MySQL database of a server.
 
 ## Core Features
 
@@ -23,7 +23,7 @@ The system currently has a React frontend, a Node/Express API with MySQL, and an
 - Frontend: React + Vite + TypeScript + Tailwind CSS + Chart.js
 - Main API: Node.js + Express + MySQL (`mysql2`)
 - Uploads: Multer (food image uploads)
-- Emotion/Capture service (optional): FastAPI + OpenCV + PyMySQL
+- Emotion/Capture service (backend): FastAPI + OpenCV + PyMySQL
 - Database: MySQL schema in `server_database/schema.sql`
 
 ## Project Structure
@@ -35,16 +35,6 @@ backend/              FastAPI capture/emotion service
 server_database/      MySQL schema
 docs/                 project and design docs
 ```
-
-## Recent Updates Reflected In This Version
-
-- Added participant table and participant-aware session flow.
-- Added food image upload endpoint and static serving via `/uploads`.
-- Added session status patch endpoint and session delete endpoint.
-- Revised survey to fully use 1-9 ratings and removed per-survey demographics input (now sourced from participant/session context).
-- Added frame image URL support in `frame_logs` and session detail UI previews.
-- Added analytics completeness checks (`sessionCount`, `frameLogCount`, `surveyCount`) and graph gating when data is incomplete.
-- Updated dashboard/session/setup/survey headings and session detail analytics visualizations.
 
 ## Database Notes
 
@@ -76,7 +66,7 @@ npm install
 npm run server
 ```
 
-Health check:
+Health check (optional):
 
 ```text
 http://localhost:5000/api/health
@@ -94,28 +84,14 @@ Open:
 http://localhost:5173
 ```
 
-### 4. Optional: run FastAPI capture service (recommended on port 5001)
+### 4. Optional: Run FastAPI for the backend. Make sure the python is 3.10-3.11.
 
 ```bash
 cd backend
 
-python -m venv .venv
-\.venv\Scripts\activate
+pip install -r backend\requirements.txt
 
-pip install -r requirements.txt
-
-uvicorn app:app --host 0.0.0.0 --port 5001 --reload
-```
-
-Optional environment variables for FastAPI DB/frame logging:
-
-```env
-MYSQL_HOST=localhost
-MYSQL_USER=root
-MYSQL_PASSWORD=
-MYSQL_DATABASE=familis_db
-MYSQL_PORT=3306
-FASTAPI_PUBLIC_BASE=http://localhost:5001
+python backend\emotion_service.py
 ```
 
 ## Typical User Flow
@@ -126,16 +102,3 @@ FASTAPI_PUBLIC_BASE=http://localhost:5001
 4. Session page: record and stop session.
 5. Survey: submit all five 1-9 ratings and optional remarks.
 6. Session Detail / Dashboard Analytics: review outcomes and trends.
-
-## Current Limitations
-
-- FastAPI emotion model remains placeholder logic unless you replace `predict_emotions()` in `backend/app.py`.
-- Automatic frontend-to-FastAPI session binding for frame capture should be verified in your deployment flow.
-- Consent checkboxes are enforced in UI but not currently persisted as dedicated DB consent records.
-
-## Next Improvements
-
-- Plug in a production FER model.
-- Ensure end-to-end frame logging trigger between active session and FastAPI capture endpoints.
-- Add persisted consent audit fields.
-- Add auth hardening (password hashing/token flow).
