@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import bcrypt from "bcryptjs";
 import { initDb } from "./init.js";
 import multer from "multer";
 import { mkdir, readFile } from "fs/promises";
@@ -137,10 +138,29 @@ async function start() {
       }
 
       const user = rows[0];
+      const stored = user.password_hash;
 
-      // NOTE: For now plain-text comparison to match seeded user.
-      // Replace with proper hashing (e.g. bcrypt) later.
-      if (user.password_hash !== password) {
+      const isBcrypt =
+        typeof stored === "string" && /^\$2[aby]\$\d{2}\$/.test(stored);
+
+      let passwordOk = false;
+      if (isBcrypt) {
+        passwordOk = await bcrypt.compare(password, stored);
+      } else if (stored === password) {
+        // Legacy plain-text row: migrate in place on first successful login.
+        passwordOk = true;
+        try {
+          const newHash = await bcrypt.hash(password, 10);
+          await pool.query("UPDATE users SET password_hash = ? WHERE user_id = ?", [
+            newHash,
+            user.user_id,
+          ]);
+        } catch (migrateErr) {
+          console.error("Password hash migration failed:", migrateErr);
+        }
+      }
+
+      if (!passwordOk) {
         return res.status(401).json({ ok: false, error: "Invalid email or password." });
       }
 

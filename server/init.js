@@ -2,6 +2,7 @@ import { readFile } from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 import mysql from "mysql2/promise";
+import bcrypt from "bcryptjs";
 import "dotenv/config";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -34,14 +35,17 @@ export async function initDb() {
   const schemaSql = await readFile(schemaPath, "utf8");
   await pool.query(schemaSql);
 
-  // Seed admin user that matches the current demo login
+  // Seed admin user (plaintext demo password hashed with bcrypt; salt is inside the hash)
+  const adminPasswordHash = await bcrypt.hash("admin123", 10);
   await pool.query(
     `
     INSERT INTO users (username, email, password_hash, role)
     VALUES (?, ?, ?, ?)
-    ON DUPLICATE KEY UPDATE username = VALUES(username);
+    ON DUPLICATE KEY UPDATE
+      username = VALUES(username),
+      password_hash = VALUES(password_hash);
   `,
-    ["admin", "admin@familis.com", "admin123", "admin"]
+    ["admin", "admin@familis.com", adminPasswordHash, "admin"]
   );
 
   /**
