@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { performLogout } from "../RequireAuth";
-import logo from "../assets/logo.png";
+import { PageHeader, PageTitle } from "../components/PageHeader";
+import { confidenceToTier, confidenceTooltip } from "../lib/confidence";
+import { hedonicLabel } from "../lib/ratingLabels";
 
 const API_BASE = "http://localhost:5000";
 const FRAME_CAPTURE_MS = 750;
-// Use backend so session_id in this page matches DB rows.
 const USE_DB = true;
 
 type Food = {
@@ -37,9 +37,33 @@ function formatMmSs(totalSeconds: number) {
   return `${mm}:${ss}`;
 }
 
-/** hedonic 0..1 from DB/model → 1..9 display (matches SessionDetail) */
 function hedonic01ToScale(hedonic01: number) {
   return Number((hedonic01 * 8 + 1).toFixed(1));
+}
+
+type SentimentKey = "Positive" | "Negative" | "Neutral";
+
+const SENTIMENT_STYLES: Record<SentimentKey, { bg: string; text: string; icon: string; ring: string }> = {
+  Positive: { bg: "bg-green-100", text: "text-green-800", icon: "↑", ring: "ring-green-400" },
+  Negative: { bg: "bg-red-100",   text: "text-red-800",   icon: "↓", ring: "ring-red-400" },
+  Neutral:  { bg: "bg-gray-100",  text: "text-gray-700",  icon: "→", ring: "ring-gray-300" },
+};
+
+function SentimentChip({ sentiment }: { sentiment: string | null }) {
+  if (!sentiment) {
+    return <span className="text-xs text-gray-400">—</span>;
+  }
+  const key = (sentiment.charAt(0).toUpperCase() + sentiment.slice(1)) as SentimentKey;
+  const style = SENTIMENT_STYLES[key] ?? SENTIMENT_STYLES.Neutral;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ${style.bg} ${style.text}`}
+      aria-label={`Sentiment: ${sentiment}`}
+    >
+      <span aria-hidden="true">{style.icon}</span>
+      {key}
+    </span>
+  );
 }
 
 export default function Session() {
@@ -120,9 +144,7 @@ export default function Session() {
     const v = videoRef.current;
     if (v) {
       const obj = v.srcObject;
-      if (obj instanceof MediaStream) {
-        obj.getTracks().forEach((t) => t.stop());
-      }
+      if (obj instanceof MediaStream) obj.getTracks().forEach((t) => t.stop());
       v.srcObject = null;
     }
   };
@@ -146,8 +168,7 @@ export default function Session() {
     } catch (err: any) {
       if (!cameraSessionActiveRef.current) return;
       setCameraError(
-        err?.message ||
-          "Camera permission denied or not available. Please allow access and try again."
+        err?.message || "Camera permission denied or not available. Please allow access and try again."
       );
     }
   };
@@ -202,7 +223,6 @@ export default function Session() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Release hardware before the next screen (e.g. Survey) paints.
   useLayoutEffect(() => {
     return () => {
       cameraSessionActiveRef.current = false;
@@ -214,7 +234,6 @@ export default function Session() {
     if (sessionId == null || frameInFlightRef.current) return;
     const video = videoRef.current;
     if (!video || video.readyState < 2) return;
-
     const vw = video.videoWidth;
     const vh = video.videoHeight;
     if (!vw || !vh) return;
@@ -229,7 +248,6 @@ export default function Session() {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
-      // Mirror horizontally to align with 6.3 webcam / live_predict pipeline
       ctx.translate(w, 0);
       ctx.scale(-1, 1);
       ctx.drawImage(video, 0, 0, w, h);
@@ -273,10 +291,7 @@ export default function Session() {
 
   useEffect(() => {
     if (!sessionId || !isRecording || isPaused || cameraError) return;
-
-    const id = window.setInterval(() => {
-      void sendFrame();
-    }, FRAME_CAPTURE_MS);
+    const id = window.setInterval(() => { void sendFrame(); }, FRAME_CAPTURE_MS);
     return () => window.clearInterval(id);
   }, [sessionId, isRecording, isPaused, cameraError, sendFrame]);
 
@@ -310,21 +325,17 @@ export default function Session() {
     setStopPending(true);
     setConfirmOpen(false);
     setStopError(null);
-
     try {
       stopCamera();
       setIsRecording(false);
       setIsPaused(false);
       pauseStartRef.current = null;
 
-      const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/stop`, {
-        method: "POST",
-      });
+      const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/stop`, { method: "POST" });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) {
         throw new Error(json?.error || "Unable to stop the session in the database.");
       }
-
       navigate("/survey", { state: { sessionId } });
     } catch (err: any) {
       setStopError(err?.message || "Unable to stop the session.");
@@ -334,152 +345,205 @@ export default function Session() {
     }
   };
 
-  const handleCancelStop = () => {
-    setConfirmOpen(false);
-  };
-
   const handleBackToDashboard = () => {
     stopCamera();
     navigate("/dashboard");
   };
 
-  const hedonicDisplay =
-    liveHedonic01 == null ? null : hedonic01ToScale(liveHedonic01);
-  const confidencePct =
-    liveConfidence01 == null ? null : Math.round(liveConfidence01 * 100);
+  const hedonicDisplay = liveHedonic01 == null ? null : hedonic01ToScale(liveHedonic01);
+  const confidencePct  = liveConfidence01 == null ? null : Math.round(liveConfidence01 * 100);
+  const confidenceTier = liveConfidence01 == null ? null : confidenceToTier(liveConfidence01);
+  const confTooltipText = liveConfidence01 == null ? null : confidenceTooltip(liveConfidence01);
+
+  const hedonicLabelText =
+    hedonicDisplay == null ? null : hedonicLabel(hedonicDisplay);
 
   return (
     <div className="min-h-screen bg-[#f6f7fb]" style={{ fontFamily: "'Montserrat', sans-serif" }}>
-      <header className="bg-red-600 text-white">
-        <div className="h-[72px] px-6 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={handleBackToDashboard}
-            className="flex items-center gap-3"
-            aria-label="Back to dashboard"
-          >
-            <img src={logo} alt="FaMiLis logo" className="w-[44px] h-[44px] object-contain" />
-            <span className="text-white text-[22px] font-bold tracking-wide">FaMiLis</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              stopCamera();
-              performLogout(navigate);
-            }}
-            className="bg-white/90 text-red-700 hover:bg-white transition-colors px-4 py-2 rounded-md text-sm font-semibold"
-          >
-            Log Out
-          </button>
-        </div>
-      </header>
+      <PageHeader onLogoClick={handleBackToDashboard} />
 
       <main className="px-6 py-8">
         <div className="max-w-4xl mx-auto">
-          <button
-            type="button"
-            onClick={handleBackToDashboard}
-            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-4 text-sm transition-colors"
-          >
-            <span aria-hidden="true">←</span>
-            Back to Dashboard
-          </button>
+          <PageTitle
+            title="Camera Recording"
+            subtitle={food ? `${food.name} · ${food.category}` : "Session"}
+            onBack={handleBackToDashboard}
+          />
 
-          <div className="mb-6">
-            <h1 className="text-[26px] font-bold text-gray-900">Camera Recording</h1>
-            <p className="text-[12px] text-gray-500 mt-1">
-              {food ? `${food.name} • ${food.category}` : "Session"}
-            </p>
-          </div>
+          {/* Pause banner — full width, above grid */}
+          {isRecording && isPaused && (
+            <div className="mb-4 flex items-center gap-3 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 flex-shrink-0" aria-hidden="true" />
+              <p className="text-sm font-semibold text-amber-800">
+                Data collection paused — no frames are being captured.
+              </p>
+              <button
+                type="button"
+                onClick={togglePause}
+                className="ml-auto text-xs font-semibold text-amber-700 underline underline-offset-2 hover:text-amber-900"
+              >
+                Resume
+              </button>
+            </div>
+          )}
 
           {loading ? (
             <div className="text-center text-gray-600 text-sm">Loading session…</div>
           ) : loadError ? (
             <div className="text-center text-red-600 text-sm">
               {loadError}{" "}
-              <button
-                type="button"
-                onClick={() => navigate("/dashboard")}
-                className="text-red-700 underline ml-2"
-              >
+              <button type="button" onClick={() => navigate("/dashboard")} className="text-red-700 underline ml-2">
                 Go back
               </button>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Left column — stats + FER */}
               <div className="space-y-5">
+                {/* Timer */}
                 <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                  <p className="text-[12px] text-gray-500 font-semibold">Session</p>
-                  <p className="text-[34px] leading-none font-extrabold text-gray-900 mt-2">
+                  <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider">Session Timer</p>
+                  <p className="text-[clamp(2rem,5vw,2.5rem)] leading-none font-extrabold text-gray-900 mt-2 tabular-nums">
                     {formatMmSs(elapsedSeconds)}
                   </p>
                   <p className="text-[11px] text-gray-500 mt-2">
-                    Timer pauses while recording is paused. Frames are not captured when paused.
+                    Timer pauses while recording is paused.
                   </p>
                 </div>
 
+                {/* FER panel */}
                 <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                  <p className="text-[12px] text-gray-700 font-semibold mb-2">FER (live)</p>
-                  {emotionServiceOk === false ? (
-                    <p className="text-[11px] text-amber-700 mb-2">
-                      Emotion service offline or model missing. Start{" "}
-                      <code className="text-[10px] bg-amber-50 px-1 rounded">npm run emotion-service</code>{" "}
-                      (Python) after training <code className="text-[10px] bg-amber-50 px-1">*.pkl</code> in{" "}
-                      <code className="text-[10px] bg-amber-50 px-1">backend/6.3</code>. Frames still save;
-                      scores may be empty.
-                    </p>
-                  ) : null}
-                  <div className="space-y-1 text-[12px] text-gray-700">
-                    <p>
-                      <span className="text-gray-500">Hedonic (1–9):</span>{" "}
-                      {hedonicDisplay == null ? "—" : `${hedonicDisplay} / 9`}
-                    </p>
-                    <p>
-                      <span className="text-gray-500">Confidence:</span>{" "}
-                      {confidencePct == null ? "—" : `${confidencePct}%`}
-                    </p>
-                    <p>
-                      <span className="text-gray-500">Sentiment:</span>{" "}
-                      {liveSentiment ?? "—"}
-                    </p>
-                    <p className="text-[11px] text-gray-500 mt-2">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-xs text-gray-700 font-bold">Live Emotion (FER)</p>
+                    {emotionServiceOk === false && (
+                      <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full font-semibold">
+                        Service offline
+                      </span>
+                    )}
+                  </div>
+
+                  {emotionServiceOk === false && (
+                    <div className="mb-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-md p-2.5">
+                      Start the emotion service:{" "}
+                      <code className="text-[10px] bg-amber-100 px-1 py-0.5 rounded">npm run emotion-service</code>{" "}
+                      (run{" "}
+                      <code className="text-[10px] bg-amber-100 px-1 py-0.5 rounded">python backend/emotion_service.py</code>{" "}
+                      after training{" "}
+                      <code className="text-[10px] bg-amber-100 px-1 py-0.5 rounded">*.pkl</code>{" "}
+                      in <code className="text-[10px] bg-amber-100 px-1 py-0.5 rounded">backend/</code>).
+                    </div>
+                  )}
+
+                  <div className="space-y-3">
+                    {/* Hedonic metric card */}
+                    <div className="bg-gray-50 rounded-lg border border-gray-100 px-3 py-2.5">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-[11px] text-gray-500 font-semibold">Hedonic Score</span>
+                          <span className="text-sm font-bold text-gray-900">
+                            {hedonicDisplay == null ? "—" : `${hedonicDisplay} / 9`}
+                          </span>
+                      </div>
+                      <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-[#e8174a] rounded-full transition-all duration-300"
+                          style={{ width: hedonicDisplay == null ? "0%" : `${((hedonicDisplay - 1) / 8) * 100}%` }}
+                        />
+                      </div>
+                      {hedonicLabelText && (
+                        <p className="text-[10px] text-gray-500 mt-1">{hedonicLabelText}</p>
+                      )}
+                    </div>
+
+                    {/* Confidence metric card */}
+                    <div className="bg-gray-50 rounded-lg border border-gray-100 px-3 py-2.5">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-[11px] text-gray-500 font-semibold">Confidence</span>
+                        <div className="flex items-center gap-1.5">
+                          {confidenceTier && (
+                            <span
+                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${confidenceTier.bgClass} ${confidenceTier.textClass}`}
+                              title={confTooltipText ?? undefined}
+                            >
+                              {confidenceTier.label}
+                            </span>
+                          )}
+                          <span className="text-sm font-bold text-gray-900">
+                            {confidencePct == null ? "—" : `${confidencePct}%`}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${confidenceTier?.colorClass ?? "bg-gray-300"}`}
+                          style={{ width: confidencePct == null ? "0%" : `${confidencePct}%` }}
+                        />
+                      </div>
+                      {confTooltipText && (
+                        <p className="text-[10px] text-gray-500 mt-1">{confTooltipText}</p>
+                      )}
+                    </div>
+
+                    {/* Sentiment */}
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-[11px] text-gray-500 font-semibold">Sentiment</span>
+                      <SentimentChip sentiment={liveSentiment} />
+                    </div>
+
+                    <p className="text-[11px] text-gray-400 px-1">
                       Frames logged: {framesCaptured}
                     </p>
+
                     {lastInferenceError ? (
-                      <p className="text-[11px] text-red-600 mt-1">{lastInferenceError}</p>
+                      <p className="text-[11px] text-red-600 px-1">{lastInferenceError}</p>
                     ) : null}
                   </div>
                 </div>
 
+                {/* Status card */}
                 <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                  <p className="text-[12px] text-gray-700 font-semibold mb-2">Status</p>
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`inline-block w-2.5 h-2.5 rounded-full ${
-                        isRecording ? (isPaused ? "bg-amber-500" : "bg-red-600") : "bg-gray-400"
-                      }`}
-                      aria-hidden="true"
-                    />
-                    <span className="text-[12px] text-gray-600">
-                      {!isRecording
-                        ? "Recording stopped"
-                        : isPaused
-                          ? "Paused"
-                          : "Recording"}
-                    </span>
+                  <p className="text-xs text-gray-700 font-bold mb-2">Recording Status</p>
+                    <div className="flex items-center gap-2">
+                    {isRecording && !isPaused ? (
+                      <>
+                        <span
+                          className="inline-block w-2.5 h-2.5 rounded-full bg-red-600 motion-safe:animate-pulse"
+                          aria-hidden="true"
+                        />
+                        <span className="text-xs text-gray-700 font-semibold">Recording</span>
+                      </>
+                    ) : isRecording && isPaused ? (
+                      <>
+                        <span className="inline-block w-2.5 h-2.5 rounded-full bg-amber-500" aria-hidden="true" />
+                        <span className="text-xs text-amber-700 font-semibold">Paused</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="inline-block w-2.5 h-2.5 rounded-full bg-gray-400" aria-hidden="true" />
+                        <span className="text-xs text-gray-500">Stopped</span>
+                      </>
+                    )}
                   </div>
                   {session?.id ? (
-                    <p className="text-[11px] text-gray-500 mt-2">Session ID: S-{session.id}</p>
+                    <p className="text-[11px] text-gray-400 mt-2">Session ID: S-{session.id}</p>
                   ) : null}
                 </div>
               </div>
 
+              {/* Right column — camera + controls */}
               <div className="space-y-5">
                 <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                   <h3 className="text-sm text-gray-700 font-semibold mb-3">Camera Preview</h3>
 
-                  <div className="aspect-video bg-gray-100 rounded-lg overflow-hidden border border-gray-200 relative">
+                  {/* Video container with recording ring */}
+                  <div
+                    className={`aspect-video bg-gray-100 rounded-lg overflow-hidden relative transition-all duration-200 ${
+                      isRecording && !isPaused
+                        ? "ring-4 ring-red-600 ring-offset-1"
+                        : isRecording && isPaused
+                          ? "border-2 border-dashed border-amber-400"
+                          : "border border-gray-200"
+                    }`}
+                  >
                     {cameraError ? (
                       <div className="text-center px-6 h-full flex items-center justify-center">
                         <div>
@@ -491,22 +555,24 @@ export default function Session() {
                       <video ref={videoRef} className="w-full h-full object-cover" muted playsInline />
                     )}
 
+                    {/* Recording badge */}
                     {isRecording && !isPaused ? (
-                      <div className="absolute top-4 right-4 flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-full shadow-sm">
-                        <div className="w-3 h-3 bg-white rounded-full animate-pulse" />
-                        <span className="text-[13px] font-bold">Recording</span>
+                      <div className="absolute top-3 right-3 flex items-center gap-1.5 bg-red-600 text-white px-3 py-1.5 rounded-full shadow">
+                        <div className="w-2 h-2 bg-white rounded-full motion-safe:animate-pulse" aria-hidden="true" />
+                        <span className="text-[11px] font-bold tracking-wide">REC</span>
                       </div>
                     ) : null}
+
+                    {/* Paused overlay badge */}
                     {isRecording && isPaused ? (
-                      <div className="absolute top-4 right-4 flex items-center gap-2 bg-amber-500 text-white px-4 py-2 rounded-full shadow-sm">
-                        <span className="text-[13px] font-bold">Paused</span>
+                      <div className="absolute top-3 right-3 flex items-center gap-1.5 bg-amber-500 text-white px-3 py-1.5 rounded-full shadow">
+                        <span className="text-[11px] font-bold">Paused</span>
                       </div>
                     ) : null}
                   </div>
 
                   <p className="text-[11px] text-gray-500 mt-2">
-                    Keep your face visible and lighting even. Captures about every {FRAME_CAPTURE_MS / 1000}s
-                    while recording.
+                    Keep your face visible and lighting even. Captures every {FRAME_CAPTURE_MS / 1000}s while recording.
                   </p>
                 </div>
 
@@ -543,18 +609,18 @@ export default function Session() {
         </div>
       </main>
 
+      {/* Stop confirm modal */}
       {confirmOpen ? (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4 border border-gray-200">
-            <h2 className="text-gray-900 font-bold text-lg">Are you sure?</h2>
+            <h2 className="text-gray-900 font-bold text-lg">Stop the session?</h2>
             <p className="text-gray-600 text-sm mt-2">
               Stopping the session will take you to the survey page.
             </p>
-
             <div className="flex gap-3 mt-5">
               <button
                 type="button"
-                onClick={handleCancelStop}
+                onClick={() => setConfirmOpen(false)}
                 disabled={stopPending}
                 className="flex-1 border border-gray-200 text-gray-700 hover:bg-gray-50 py-2 rounded-md text-sm font-semibold transition-colors"
               >

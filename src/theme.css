@@ -1,6 +1,28 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  /* FaMiLis brand tokens */
+  --brand: #e8174a;
+  --brand-hover: #c9143f;
+  --brand-light: #fde8ed;
+
+  /* Semantic sentiment */
+  --sentiment-positive: #22c55e;
+  --sentiment-positive-bg: #f0fdf4;
+  --sentiment-neutral: #eab308;
+  --sentiment-neutral-bg: #fefce8;
+  --sentiment-negative: #ef4444;
+  --sentiment-negative-bg: #fef2f2;
+
+  /* Confidence tiers */
+  --confidence-high: #22c55e;
+  --confidence-moderate: #eab308;
+  --confidence-unreliable: #ef4444;
+
+  /* Shared card chrome */
+  --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.08), 0 1px 2px -1px rgb(0 0 0 / 0.06);
+  --card-radius: 0.75rem;
+
   --font-size: 16px;
   --background: #ffffff;
   --foreground: oklch(0.145 0 0);

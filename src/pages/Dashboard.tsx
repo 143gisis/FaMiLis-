@@ -2,6 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { performLogout } from "../RequireAuth";
 import logo from "../assets/logo.png";
+import { PageHeader } from "../components/PageHeader";
+import { confidenceToTier } from "../lib/confidence";
+import { RATING_LABELS, hedonicColor } from "../lib/ratingLabels";
+import { ATTRIBUTE_COLORS, getDemoColor } from "../lib/attributeColors";
 import {
   Chart as ChartJS,
   Filler,
@@ -291,9 +295,15 @@ export default function Dashboard() {
     return sessionCount <= 0 || frameLogCount <= 0 || surveyCount <= 0;
   }, [selectedFood, stats.sessionCount, stats.frameLogCount, stats.surveyCount]);
 
+  // Exclude "Overall" from the radar chart — keep only the 4 attribute axes.
+  const radarAttributes = useMemo(
+    () => stats.radar.filter((r) => r.label !== "Overall"),
+    [stats.radar]
+  );
+
   const radarChartData = useMemo(() => {
-    const labels = stats.radar.map((r) => r.label);
-    const values = stats.radar.map((r) => Number.isFinite(r.score) ? r.score : 0);
+    const labels = radarAttributes.map((r) => r.label);
+    const values = radarAttributes.map((r) => (Number.isFinite(r.score) ? r.score : 0));
     return {
       labels,
       datasets: [
@@ -311,7 +321,7 @@ export default function Dashboard() {
         },
       ],
     };
-  }, [stats.radar]);
+  }, [radarAttributes]);
 
   const radarChartOptions = useMemo(() => {
     return {
@@ -355,21 +365,31 @@ export default function Dashboard() {
       return t.label;
     });
 
+    const scores = stats.timeline.map((t) => (Number.isFinite(t.score) ? t.score : 0));
+
     return {
       labels,
       datasets: [
         {
           label: "FER hedonic (avg)",
-          data: stats.timeline.map((t) => (Number.isFinite(t.score) ? t.score : 0)),
-          borderColor: "rgb(232, 23, 74)",
-          backgroundColor: "rgb(232, 23, 74)",
-          pointBackgroundColor: "rgb(232, 23, 74)",
-          pointBorderColor: "rgb(232, 23, 74)",
-          pointRadius: 6,
-          pointHoverRadius: 7,
+          data: scores,
+          // Per-segment color based on the average of the two endpoint scores
+          segment: {
+            borderColor: (ctx: any) => {
+              const avg = (ctx.p0.parsed.y + ctx.p1.parsed.y) / 2;
+              return hedonicColor(avg);
+            },
+          },
+          pointBackgroundColor: scores.map((s) => hedonicColor(s)),
+          pointBorderColor: "#fff",
+          pointRadius: 7,
+          pointHoverRadius: 8,
           borderWidth: 3,
           tension: 0.35,
           fill: false,
+          // borderColor is overridden per-segment; this is a fallback
+          borderColor: "transparent",
+          backgroundColor: "transparent",
         },
       ],
     };
@@ -498,35 +518,14 @@ export default function Dashboard() {
       className="min-h-screen bg-[#f6f7fb]"
       style={{ fontFamily: "'Montserrat', sans-serif" }}
     >
-      {/* Top bar */}
-      <header className="bg-red-600 text-white">
-        <div className="h-[72px] px-6 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => navigate("/dashboard")}
-            className="flex items-center gap-3"
-            aria-label="Go to dashboard"
-          >
-            <img src={logo} alt="FaMiLis logo" className="w-[44px] h-[44px] object-contain" />
-            <span className="text-white text-[22px] font-bold tracking-wide">FaMiLis</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => performLogout(navigate)}
-            className="bg-white/90 text-red-700 hover:bg-white transition-colors px-4 py-2 rounded-md text-sm font-semibold"
-          >
-            Log Out
-          </button>
-        </div>
-      </header>
+      <PageHeader />
 
       <main className="px-6 py-8">
-        <div className="max-w-3xl mx-auto">
+        <div className="max-w-5xl mx-auto">
           {/* Title */}
           <div className="text-center mb-6">
-            <h1 className="text-[26px] font-bold text-gray-900">Food Testing Hub</h1>
-            <p className="text-[12px] text-gray-500 mt-1">Add and Manage Food for Testing</p>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Food Testing Hub</h1>
+            <p className="text-xs sm:text-sm text-gray-500 mt-1">Add and Manage Food for Testing</p>
           </div>
 
           {/* Actions */}
@@ -580,8 +579,10 @@ export default function Dashboard() {
                   <p className="text-xs mt-2 text-gray-400">{foodsError}</p>
                 </div>
               ) : foods.length === 0 ? (
-                <div className="text-center py-14 text-gray-500">
-                  <p className="text-sm">No foods added yet.</p>
+                <div className="text-center py-14 text-gray-400">
+                  <div className="text-4xl mb-3" aria-hidden="true">🍽️</div>
+                  <p className="text-sm font-semibold text-gray-600">No food products yet</p>
+                  <p className="text-xs mt-1">Click "Add New Food" to register your first product for testing.</p>
                 </div>
               ) : (
                 <div className="divide-y divide-gray-100">
@@ -593,7 +594,7 @@ export default function Dashboard() {
                         <div className="flex items-start justify-between gap-4">
                           <div className="min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <p className="text-[14px] font-semibold text-gray-900 truncate">
+                              <p className="text-sm font-semibold text-gray-900 truncate">
                                 <span className="inline-flex items-center gap-2">
                                   {food.imageUrl ? (
                                     <img
@@ -623,7 +624,7 @@ export default function Dashboard() {
                               </Badge>
                             </div>
 
-                            <div className="mt-2 space-y-0.5 text-[12px] text-gray-500">
+                            <div className="mt-2 space-y-0.5 text-xs text-gray-500">
                               <p>
                                 <span className="text-gray-700 font-semibold">Category:</span>{" "}
                                 {food.category}
@@ -642,7 +643,7 @@ export default function Dashboard() {
                               <button
                                 type="button"
                                 onClick={() => setFoodToDelete(food)}
-                                className="text-[12px] font-semibold text-[#e8174a] hover:text-[#c9143f] transition-colors inline-flex items-center gap-1"
+                                className="text-xs font-semibold text-[#e8174a] hover:text-[#c9143f] transition-colors inline-flex items-center gap-1"
                               >
                                 <span aria-hidden="true">🗑️</span>
                                 Delete
@@ -654,7 +655,7 @@ export default function Dashboard() {
                                   setExpandedFoodId(next);
                                   if (next != null) await ensureSessionsLoaded(next);
                                 }}
-                                className="text-[12px] font-semibold text-gray-600 hover:text-gray-900 transition-colors inline-flex items-center gap-1"
+                                className="text-xs font-semibold text-gray-600 hover:text-gray-900 transition-colors inline-flex items-center gap-1"
                               >
                                 <span aria-hidden="true">{isExpanded ? "🔼" : "🔽"}</span>
                                 {isExpanded ? "Hide Sessions" : "View Sessions"}
@@ -665,14 +666,14 @@ export default function Dashboard() {
 
                         {isExpanded && (
                           <div className="mt-4 pt-4 border-t border-gray-100">
-                            <h3 className="text-[12px] text-gray-700 font-bold mb-2">
+                            <h3 className="text-xs text-gray-700 font-bold mb-2">
                               Testing Sessions
                             </h3>
 
                             {sessionsLoading[food.id] ? (
-                              <div className="text-[12px] text-gray-500">Loading sessions…</div>
+                              <div className="text-xs text-gray-500">Loading sessions…</div>
                             ) : sessions.length === 0 ? (
-                              <div className="text-[12px] text-gray-500">No sessions yet.</div>
+                              <div className="text-xs text-gray-500">No sessions yet.</div>
                             ) : (
                               <div className="space-y-2">
                                 {sessions.map((s) => (
@@ -682,7 +683,7 @@ export default function Dashboard() {
                                   >
                                     <div className="flex items-start justify-between gap-3 mb-2">
                                       <div className="flex items-center gap-2">
-                                        <p className="text-[12px] font-semibold text-gray-900">
+                                        <p className="text-xs font-semibold text-gray-900">
                                           S-{s.id}
                                         </p>
                                         <Badge className={statusClasses(s.status)}>{formatStatus(s.status)}</Badge>
@@ -690,13 +691,13 @@ export default function Dashboard() {
                                       <button
                                         type="button"
                                         onClick={() => navigate(`/session-detail?sessionId=${s.id}`)}
-                                        className="text-[12px] font-semibold text-[#e8174a] hover:text-[#c9143f] transition-colors"
+                                        className="text-xs font-semibold text-[#e8174a] hover:text-[#c9143f] transition-colors"
                                       >
                                         View Details
                                       </button>
                                     </div>
 
-                                    <div className="grid grid-cols-2 gap-2 text-[12px] text-gray-600">
+                                    <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
                                       <div>
                                         <span className="text-gray-500">Start:</span>{" "}
                                         <span className="text-gray-700">{formatDateTime(s.startTime)}</span>
@@ -729,17 +730,15 @@ export default function Dashboard() {
               )}
             </section>
           ) : (
-            <section className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+            <section className="bg-white rounded-xl border border-gray-100 shadow-sm">
               <div className="p-5 border-b border-gray-100">
                 <div className="flex items-center justify-between gap-4">
                   <div>
                     <h2 className="text-gray-900 font-bold">
                       {selectedFood ? selectedFood.name : "Statistics & Analytics"}
                     </h2>
-                    <p className="text-[12px] text-gray-500 mt-1">
-                      {selectedFood
-                        ? `Live analytics from DB${stats.sampleSize ? ` • ${stats.sampleSize} survey(s)` : ""}`
-                        : "Live analytics from DB"}
+                    <p className="text-xs text-gray-500 mt-1">
+                      Live analytics from DB
                     </p>
                   </div>
 
@@ -747,7 +746,7 @@ export default function Dashboard() {
                     <select
                       value={selectedFood?.id ?? ""}
                       onChange={(e) => setExpandedFoodId(Number(e.target.value))}
-                      className="text-[12px] border border-gray-200 rounded-md px-3 py-2 bg-white"
+                      className="text-xs border border-gray-200 rounded-md px-3 py-2 bg-white"
                       aria-label="Select food"
                     >
                       {foods.map((f) => (
@@ -762,97 +761,145 @@ export default function Dashboard() {
 
               <div className="p-5 space-y-6">
                 {selectedFood && analyticsLoading[selectedFood.id] ? (
-                  <div className="text-[12px] text-gray-500">Loading analytics…</div>
+                  <AnalyticsSkeleton />
                 ) : null}
                 {statsError ? (
-                  <div className="text-[12px] text-gray-500">
+                  <div className="text-xs text-gray-500">
                     Failed to load analytics. <span className="text-gray-400">{statsError}</span>
                   </div>
                 ) : null}
+
                 {analyticsIssues.length > 0 ? (
-                  <div className="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                  <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
                     {analyticsIssues.join(" ")}
                   </div>
                 ) : null}
 
                 {hideAnalyticsGraphs ? (
-                  <div className="text-[12px] text-gray-600 bg-gray-50 border border-gray-200 rounded-md px-3 py-2">
+                  <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-md px-3 py-2">
                     Graphs are hidden until required analytics data is available.
                   </div>
                 ) : (
-                  <>
+                  <div className="relative">
+                    {/* Low-N overlay */}
+                    {stats.surveyCount < 5 && (
+                      <div className="absolute inset-0 z-10 flex items-start justify-center pt-16 pointer-events-none">
+                        <div className="bg-white/90 border border-gray-200 rounded-xl shadow px-5 py-4 text-center max-w-xs pointer-events-auto">
+                          <p className="text-sm font-bold text-gray-800 mb-1">Low sample size</p>
+                          <p className="text-xs text-gray-500">
+                            Need at least 5 surveys for reliable trends.{" "}
+                            <span className="font-semibold text-gray-700">
+                              Currently: {stats.surveyCount}
+                            </span>
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                    <div className={stats.surveyCount < 5 ? "opacity-30 pointer-events-none select-none" : ""}>
                     {/* A */}
                     <div>
-                      <h3 className="text-[13px] font-bold text-gray-900 mb-1">
+                      <h3 className="text-sm font-bold text-gray-900 mb-1">
                         A. Frame-by-Frame Hedonic Score Distribution Report
                       </h3>
-                      <p className="text-[12px] text-gray-500 mb-4">
+                      <p className="text-xs text-gray-500 mb-4">
                         Do consumers like this product?
                       </p>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="space-y-3">
-                          <MetricCard title="Mean Hedonic Scale" subtitle="Out of 9">
-                            <p className="text-[44px] leading-none font-bold text-[#e8174a]">
-                              {stats.meanHedonic.toFixed(1)}
-                            </p>
-                          </MetricCard>
-
-                          <MetricCard title="Mean FER Confidence Level" subtitle="">
-                            <div className="flex items-end justify-between gap-3">
-                              <p className="text-[40px] leading-none font-bold text-gray-900">
-                                {Math.round(stats.meanConfidence * 100)}%
-                              </p>
-                              <p className="text-[12px] text-gray-500">(from frame logs)</p>
-                            </div>
-                            <div className="mt-2 h-2 bg-gray-200 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-[#e8174a]"
-                                style={{
-                                  width: `${clampPct(stats.meanConfidence * 100)}%`,
-                                }}
-                              />
-                            </div>
-                          </MetricCard>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        {/* 1 — Sample Size */}
+                        <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
+                          <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider mb-1">
+                            Sample Size
+                          </p>
+                          <p className="text-3xl leading-none font-extrabold text-gray-900 mt-2">
+                            {stats.surveyCount}
+                          </p>
+                          <p className="text-[11px] text-gray-400 mt-1">survey responses</p>
                         </div>
 
-                        <div>
-                          <p className="text-[12px] text-gray-600 mb-2 text-center">
-                            Reaction Distribution
-                          </p>
-                          <div className="flex items-center justify-center">
-                            <div
-                              className="w-[190px] h-[190px] rounded-full border border-gray-100 shadow-sm"
-                              style={{
-                                background:
-                                  Number(stats.frameLogCount ?? 0) <= 0
-                                    ? "conic-gradient(#e5e7eb 0% 100%)"
-                                    : `conic-gradient(${stats.distribution
-                                        .map((d, i) => {
-                                          const start =
-                                            i === 0
-                                              ? 0
-                                              : stats.distribution
-                                                  .slice(0, i)
-                                                  .reduce((a, b) => a + b.value, 0);
-                                          const end = start + d.value;
-                                          return `${d.color} ${start}% ${end}%`;
-                                        })
-                                        .join(", ")})`,
-                              }}
-                              aria-label="Pie chart"
-                            />
-                          </div>
+                        {/* 2 — Final Hedonic Score (color-coded) */}
+                        {(() => {
+                          const cl = Math.max(1, Math.min(9, stats.meanHedonic));
+                          const tVal = (cl - 1) / 8;
+                          const hue = Math.round(tVal * 120);
+                          const textColor = `hsl(${hue}, 82%, ${Math.round(44 + tVal * 4)}%)`;
+                          const bgColor   = `hsl(${hue}, 80%, 96%)`;
+                          const border    = `hsl(${hue}, 60%, 85%)`;
+                          return (
+                            <div className="rounded-xl border p-4" style={{ backgroundColor: bgColor, borderColor: border }}>
+                              <p className="text-[11px] font-semibold uppercase tracking-wider mb-1" style={{ color: textColor }}>
+                                Final Hedonic Score
+                              </p>
+                              <p className="text-3xl leading-none font-extrabold mt-2" style={{ color: textColor }}>
+                                {stats.meanHedonic.toFixed(1)}
+                              </p>
+                              <p className="text-[11px] mt-1" style={{ color: textColor, opacity: 0.7 }}>out of 9</p>
+                            </div>
+                          );
+                        })()}
 
-                          <div className="mt-3 space-y-1">
-                            {stats.distribution.map((d) => (
-                              <div key={d.label} className="flex items-center gap-2 text-[12px]">
+                        {/* 3 — FER Confidence */}
+                        {(() => {
+                          const tier = confidenceToTier(stats.meanConfidence);
+                          return (
+                            <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
+                              <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider mb-1">
+                                FER Confidence
+                              </p>
+                              <div className="flex items-end gap-1.5 mt-2">
+                                <p className="text-3xl leading-none font-extrabold text-gray-900">
+                                  {Math.round(stats.meanConfidence * 100)}%
+                                </p>
                                 <span
-                                  className="w-3 h-3 rounded-full"
+                                  className={`mb-0.5 text-[10px] font-bold px-2 py-0.5 rounded-full ${tier.bgClass} ${tier.textClass}`}
+                                  title={`Confidence tier: ${tier.label}`}
+                                >
+                                  {tier.label}
+                                </span>
+                              </div>
+                              <div className="mt-2 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full ${tier.colorClass}`}
+                                  style={{ width: `${Math.round(stats.meanConfidence * 100)}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* 4 — Reaction Distribution pie */}
+                        <div className="flex flex-col items-center justify-center">
+                          <p className="text-xs text-gray-600 mb-2 text-center">Reaction Distribution</p>
+                          <div
+                            className="w-28 h-28 sm:w-32 sm:h-32 rounded-full border border-gray-100 shadow-sm flex-shrink-0"
+                            style={{
+                              background:
+                                Number(stats.frameLogCount ?? 0) <= 0
+                                  ? "conic-gradient(#e5e7eb 0% 100%)"
+                                  : `conic-gradient(${stats.distribution
+                                      .map((d, i) => {
+                                        const start =
+                                          i === 0
+                                            ? 0
+                                            : stats.distribution
+                                                .slice(0, i)
+                                                .reduce((a, b) => a + b.value, 0);
+                                        const end = start + d.value;
+                                        return `${d.color} ${start}% ${end}%`;
+                                      })
+                                      .join(", ")})`,
+                            }}
+                            aria-label="Pie chart"
+                          />
+                          <div className="mt-2 space-y-0.5 w-full">
+                            {stats.distribution.map((d) => (
+                              <div key={d.label} className="flex items-center gap-1.5 text-[11px]">
+                                <span
+                                  className="w-2.5 h-2.5 rounded-full flex-shrink-0"
                                   style={{ backgroundColor: d.color }}
                                   aria-hidden="true"
                                 />
-                                <span className="text-gray-600">
+                                <span className="text-gray-600 leading-tight">
                                   {d.label}: {d.value}%
                                 </span>
                               </div>
@@ -864,53 +911,70 @@ export default function Dashboard() {
 
                     {/* B */}
                     <div className="border-t border-gray-100 pt-6">
-                      <h3 className="text-[13px] font-bold text-gray-900 mb-1">
+                      <h3 className="text-sm font-bold text-gray-900 mb-1">
                         B. Survey-Based Attribute Radar Report
                       </h3>
-                      <p className="text-[12px] text-gray-500 mb-4">
+                      <p className="text-xs text-gray-500 mb-4">
                         What consumers like about the product (based on session survey logs)
                       </p>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
-                          <p className="text-[12px] text-gray-700 font-semibold mb-2">Spider chart</p>
-                          <div className="h-[240px]">
+                          <p className="text-xs text-gray-700 font-semibold mb-2">Spider chart</p>
+                          <div className="min-h-[200px] h-[240px]">
                             <Radar data={radarChartData as any} options={radarChartOptions as any} />
                           </div>
                         </div>
 
                         <div className="space-y-3">
-                          {stats.radar.map((r) => (
-                            <div key={r.label}>
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-[12px] text-gray-600">{r.label}</span>
-                                <span className="text-[12px] text-gray-900 font-semibold">
-                                  {r.score.toFixed(1)} / 9
-                                </span>
+                          {stats.radar.map((r) => {
+                            const isOverall = r.label === "Overall";
+                            const color = ATTRIBUTE_COLORS[r.label] ?? "#e8174a";
+                            return (
+                              <div
+                                key={r.label}
+                                className={isOverall ? "border-t border-gray-100 pt-3 mt-1" : ""}
+                              >
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-xs text-gray-600 flex items-center gap-1.5">
+                                    <span
+                                      className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                      style={{ backgroundColor: color }}
+                                      aria-hidden="true"
+                                    />
+                                    {r.label}
+                                  </span>
+                                  <span className="text-xs text-gray-900 font-semibold">
+                                    {r.score.toFixed(1)} / 9
+                                  </span>
+                                </div>
+                                <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full"
+                                    style={{
+                                      width: `${clampPct((r.score / 9) * 100)}%`,
+                                      backgroundColor: color,
+                                    }}
+                                  />
+                                </div>
                               </div>
-                              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                                <div
-                                  className="h-full bg-[#e8174a]"
-                                  style={{ width: `${clampPct((r.score / 9) * 100)}%` }}
-                                />
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     </div>
 
                     {/* C */}
                     <div className="border-t border-gray-100 pt-6">
-                      <h3 className="text-[13px] font-bold text-gray-900 mb-1">
+                      <h3 className="text-sm font-bold text-gray-900 mb-1">
                         C. FER Timeline Report
                       </h3>
-                      <p className="text-[12px] text-gray-500 mb-4">
+                      <p className="text-xs text-gray-500 mb-4">
                         Emotion over time during testing
                       </p>
 
                       <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
-                        <div className="h-[190px]">
+                        <div className="min-h-[160px] h-[190px]">
                           <Line data={lineChartData as any} options={lineChartOptions as any} />
                         </div>
                       </div>
@@ -918,31 +982,34 @@ export default function Dashboard() {
 
                     {/* D */}
                     <div className="border-t border-gray-100 pt-6">
-                      <h3 className="text-[13px] font-bold text-gray-900 mb-1">
+                      <h3 className="text-sm font-bold text-gray-900 mb-1">
                         D. Demographics Report
                       </h3>
-                      <p className="text-[12px] text-gray-500 mb-4">
+                      <p className="text-xs text-gray-500 mb-4">
                         Consumer profile and survey-based hedonic scores
                       </p>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
-                          <p className="text-[12px] text-gray-700 font-semibold mb-3">
+                          <p className="text-xs text-gray-700 font-semibold mb-3">
                             Hedonic Score by Age Group
                           </p>
                           <div className="space-y-2">
-                            {stats.byAge.map((a) => (
+                            {stats.byAge.map((a, i) => (
                               <div key={a.label}>
-                                <div className="flex items-center justify-between text-[12px] mb-1">
+                                <div className="flex items-center justify-between text-xs mb-1">
                                   <span className="text-gray-600">{a.label}</span>
                                   <span className="text-gray-900 font-semibold">
                                     {a.score.toFixed(1)}
                                   </span>
                                 </div>
-                                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
                                   <div
-                                    className="h-full bg-[#e8174a]"
-                                    style={{ width: `${clampPct((a.score / 9) * 100)}%` }}
+                                    className="h-full rounded-full"
+                                    style={{
+                                      width: `${clampPct((a.score / 9) * 100)}%`,
+                                      backgroundColor: getDemoColor(i),
+                                    }}
                                   />
                                 </div>
                               </div>
@@ -951,22 +1018,25 @@ export default function Dashboard() {
                         </div>
 
                         <div>
-                          <p className="text-[12px] text-gray-700 font-semibold mb-3">
+                          <p className="text-xs text-gray-700 font-semibold mb-3">
                             Hedonic Score by Gender
                           </p>
                           <div className="space-y-2">
-                            {stats.byGender.map((g) => (
+                            {stats.byGender.map((g, i) => (
                               <div key={g.label}>
-                                <div className="flex items-center justify-between text-[12px] mb-1">
+                                <div className="flex items-center justify-between text-xs mb-1">
                                   <span className="text-gray-600">{g.label}</span>
                                   <span className="text-gray-900 font-semibold">
                                     {g.score.toFixed(1)}
                                   </span>
                                 </div>
-                                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
                                   <div
-                                    className="h-full bg-[#e8174a]"
-                                    style={{ width: `${clampPct((g.score / 9) * 100)}%` }}
+                                    className="h-full rounded-full"
+                                    style={{
+                                      width: `${clampPct((g.score / 9) * 100)}%`,
+                                      backgroundColor: getDemoColor(i + 3),
+                                    }}
                                   />
                                 </div>
                               </div>
@@ -975,7 +1045,36 @@ export default function Dashboard() {
                         </div>
                       </div>
                     </div>
-                  </>
+
+                    {/* 1–9 hedonic legend */}
+                    <div className="border-t border-gray-100 pt-6">
+                      <h3 className="text-sm font-bold text-gray-900 mb-3">
+                        9-Point Hedonic Scale Reference
+                      </h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-1">
+                        {Array.from({ length: 9 }, (_, i) => 9 - i).map((score) => {
+                          const isPositive = score >= 7;
+                          const isNegative = score <= 4;
+                          return (
+                            <div
+                              key={score}
+                              className={`flex items-center gap-2 px-2 py-1 rounded text-xs ${
+                                isPositive
+                                  ? "bg-green-50 text-green-800"
+                                  : isNegative
+                                    ? "bg-red-50 text-red-800"
+                                    : "bg-yellow-50 text-yellow-800"
+                              }`}
+                            >
+                              <span className="font-bold w-4 text-center">{score}</span>
+                              <span>{RATING_LABELS[score]}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    </div>
+                  </div>
                 )}
               </div>
             </section>
@@ -1076,12 +1175,12 @@ export default function Dashboard() {
 function StatCard({ icon, label, value }: { icon: string; label: string; value: number }) {
   return (
     <div className="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3 shadow-sm">
-      <span className="text-2xl w-10 h-10 flex items-center justify-center rounded-lg bg-red-50">
+      <span className="text-2xl w-10 h-10 flex items-center justify-center rounded-lg bg-red-50 flex-shrink-0">
         {icon}
       </span>
-      <div>
-        <p className="text-[12px] text-gray-500 font-semibold">{label}</p>
-        <p className="text-[26px] leading-none text-gray-900 font-bold mt-1">{value}</p>
+      <div className="min-w-0">
+        <p className="text-xs text-gray-500 font-semibold truncate">{label}</p>
+        <p className="text-2xl leading-none text-gray-900 font-bold mt-1">{value}</p>
       </div>
     </div>
   );
@@ -1100,7 +1199,7 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`flex-1 py-2.5 text-[13px] font-semibold transition-colors ${
+      className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${
         active ? "bg-[#e8174a] text-white" : "bg-white text-gray-600 hover:bg-gray-50"
       }`}
     >
@@ -1128,7 +1227,7 @@ function MetricCard({
 }) {
   return (
     <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
-      <p className="text-[12px] text-gray-500 font-semibold">{title}</p>
+      <p className="text-xs text-gray-500 font-semibold">{title}</p>
       {subtitle ? <p className="text-[11px] text-gray-400 mt-0.5">{subtitle}</p> : null}
       <div className="mt-2">{children}</div>
     </div>
@@ -1140,6 +1239,103 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div>
       <label className="block text-sm text-gray-600 mb-1 font-semibold">{label}</label>
       {children}
+    </div>
+  );
+}
+
+function HeroKpiBlock({
+  meanHedonic,
+  surveyCount,
+  meanConfidence,
+}: {
+  meanHedonic: number;
+  surveyCount: number;
+  meanConfidence: number;
+}) {
+  const tier = confidenceToTier(meanConfidence);
+
+  // Dynamic color variants for the hedonic score card
+  const clamped = Math.max(1, Math.min(9, meanHedonic));
+  const t = (clamped - 1) / 8;
+  const hue = Math.round(t * 120);
+  const hedonicTextColor = `hsl(${hue}, 82%, ${Math.round(44 + t * 4)}%)`;
+  const hedonicBgColor   = `hsl(${hue}, 80%, 96%)`;
+  const hedonicBorderColor = `hsl(${hue}, 60%, 85%)`;
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pb-2">
+      {/* 1 — Sample Size */}
+      <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
+        <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider mb-1">
+          Sample Size
+        </p>
+        <p className="text-4xl leading-none font-extrabold text-gray-900">
+          {surveyCount}
+        </p>
+        <p className="text-[11px] text-gray-400 mt-1">survey responses</p>
+      </div>
+
+      {/* 2 — Final Hedonic Score (color-coded by score) */}
+      <div
+        className="col-span-2 sm:col-span-1 rounded-xl border p-4"
+        style={{ backgroundColor: hedonicBgColor, borderColor: hedonicBorderColor }}
+      >
+        <p
+          className="text-[11px] font-semibold uppercase tracking-wider mb-1"
+          style={{ color: hedonicTextColor }}
+        >
+          Final Hedonic Score
+        </p>
+        <p
+          className="text-[clamp(2rem,5vw,2.75rem)] leading-none font-extrabold"
+          style={{ color: hedonicTextColor }}
+        >
+          {meanHedonic.toFixed(1)}
+        </p>
+        <p className="text-[11px] mt-1" style={{ color: hedonicTextColor, opacity: 0.7 }}>
+          out of 9
+        </p>
+      </div>
+
+      {/* 3 — FER Confidence */}
+      <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
+        <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider mb-1">
+          FER Confidence
+        </p>
+        <div className="flex items-end gap-2 mt-1">
+          <p className="text-[clamp(1.5rem,3vw,1.75rem)] leading-none font-extrabold text-gray-900">
+            {Math.round(meanConfidence * 100)}%
+          </p>
+          <span
+            className={`mb-0.5 text-[10px] font-bold px-2 py-0.5 rounded-full ${tier.bgClass} ${tier.textClass}`}
+            title={`Confidence tier: ${tier.label}`}
+          >
+            {tier.label}
+          </span>
+        </div>
+        <div className="mt-2 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full ${tier.colorClass}`}
+            style={{ width: `${Math.round(meanConfidence * 100)}%` }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AnalyticsSkeleton() {
+  return (
+    <div className="space-y-4 animate-pulse" aria-hidden="true">
+      <div className="grid grid-cols-3 gap-3">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="h-20 bg-gray-100 rounded-xl" />
+        ))}
+      </div>
+      <div className="h-4 bg-gray-100 rounded w-1/3" />
+      <div className="h-40 bg-gray-100 rounded-xl" />
+      <div className="h-4 bg-gray-100 rounded w-1/4" />
+      <div className="h-32 bg-gray-100 rounded-xl" />
     </div>
   );
 }
