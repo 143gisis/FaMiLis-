@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { PageHeader } from "../components/PageHeader";
+import { apiFetch } from "../lib/api";
 import { RATING_LABELS, getGuideEmoji } from "../lib/ratingLabels";
-
-const API_BASE = "http://localhost:5000";
+import { clearStoredSession, getStoredRole, performLogout } from "../RequireAuth";
 
 const RATING_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
+const AUTO_LOGOUT_SECONDS = 10;
 
 type Food = {
   id: number;
@@ -16,6 +17,7 @@ type Food = {
 export default function Survey() {
   const location = useLocation() as any;
   const navigate = useNavigate();
+  const isTester = getStoredRole() === "tester";
 
   const sessionId = useMemo<number | null>(() => {
     const fromState = location.state?.sessionId;
@@ -34,6 +36,8 @@ export default function Survey() {
   const [food, setFood] = useState<Food | null>(null);
   const [loading, setLoading] = useState<boolean>(!!sessionId);
   const [error, setError] = useState<string | null>(null);
+  const [finished, setFinished] = useState(false);
+  const [logoutSeconds, setLogoutSeconds] = useState(AUTO_LOGOUT_SECONDS);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -44,12 +48,19 @@ export default function Survey() {
 
     async function load() {
       try {
-        const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`, { signal: ac.signal });
+        const res = await apiFetch(`/api/sessions/${sessionId}`, { signal: ac.signal });
         const json = await res.json().catch(() => null);
         if (!res.ok || !json?.ok) {
           throw new Error(json?.error || "Failed to load session.");
         }
         setFood((json.food ?? null) as Food | null);
+        // Only show finished screen if the survey was actually submitted previously
+        // (handles refresh after submission). status === "completed" alone is not
+        // sufficient because stop recording also sets status to completed.
+        if (isTester && json.session?.hasSurvey === true) {
+          clearStoredSession();
+          setFinished(true);
+        }
       } catch (err: any) {
         if (err?.name === "AbortError") return;
         setError(err?.message || "Failed to load session.");
@@ -61,7 +72,22 @@ export default function Survey() {
 
     void load();
     return () => ac.abort();
-  }, [sessionId]);
+  }, [sessionId, isTester]);
+
+  useEffect(() => {
+    if (!finished || !isTester) return;
+
+    setLogoutSeconds(AUTO_LOGOUT_SECONDS);
+    const tick = setInterval(() => {
+      setLogoutSeconds((s) => Math.max(0, s - 1));
+    }, 1000);
+    const logout = setTimeout(() => performLogout(navigate, { clearSession: true }), AUTO_LOGOUT_SECONDS * 1000);
+
+    return () => {
+      clearInterval(tick);
+      clearTimeout(logout);
+    };
+  }, [finished, isTester, navigate]);
 
   const [ratings, setRatings] = useState<{
     color: number | null;
@@ -110,7 +136,7 @@ export default function Survey() {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/survey`, {
+      const res = await apiFetch(`/api/sessions/${sessionId}/survey`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -129,9 +155,17 @@ export default function Survey() {
       }
 
       setSaved(true);
-      setTimeout(() => {
-        navigate(`/session-detail?sessionId=${sessionId}`);
-      }, 700);
+      if (isTester) {
+        // Show "Survey saved" toast briefly before switching to finished card.
+        setTimeout(() => {
+          clearStoredSession();
+          setFinished(true);
+        }, 700);
+      } else {
+        setTimeout(() => {
+          navigate(`/session-detail?sessionId=${sessionId}`);
+        }, 700);
+      }
     } catch (err: any) {
       setError(err?.message || "Failed to submit survey.");
     } finally {
@@ -143,7 +177,7 @@ export default function Survey() {
     <div className="min-h-screen bg-[#f6f7fb]" style={{ fontFamily: "'Montserrat', sans-serif" }}>
       <PageHeader />
 
-      {saved && (
+      {saved && !finished && (
         <div className="fixed top-4 right-4 z-50 bg-green-600 text-white px-5 py-3 rounded-lg shadow-lg text-sm font-semibold flex items-center gap-2">
           <span aria-hidden="true">✓</span>
           Survey saved
@@ -151,92 +185,116 @@ export default function Survey() {
       )}
 
       <main className="px-6 py-10">
-        <div className="max-w-4xl mx-auto">
-          <div className="bg-white px-8 py-6 rounded-[10px] mb-6 text-center border border-gray-200">
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
-              Hedonic Sensory Evaluation Form
-            </h1>
-          </div>
-
-          <div className="bg-white px-8 py-6 rounded-[10px] mb-6 text-center border border-gray-200">
-            <h3 className="text-base font-bold text-gray-900 mb-3">Evaluation Guide</h3>
-            <p className="text-sm text-gray-700 mb-4">
-              Please evaluate based on the 9-point scale rating below:
-            </p>
-            <div className="space-y-1">
-              {Array.from({ length: 9 }, (_, i) => 9 - i).map((score) => (
-                <p key={score} className="text-sm text-gray-800 font-medium">
-                  <span className="font-bold">{score}</span> - {RATING_LABELS[score]}{" "}
-                  <span aria-hidden="true">{getGuideEmoji(score)}</span>
+        <div className="max-w-6xl mx-auto">
+          {finished ? (
+            <div className="bg-white rounded-xl border border-gray-200 p-10 shadow-sm text-center max-w-lg mx-auto">
+              <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-5">
+                <span className="text-3xl text-green-600" aria-hidden="true">
+                  ✓
+                </span>
+              </div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Thank you — session complete</h1>
+              <p className="text-sm text-gray-600 mt-3">
+                Your ratings have been saved. You may leave the booth.
+              </p>
+              {food?.name ? (
+                <p className="text-sm text-gray-500 mt-2">
+                  Product: <span className="font-semibold text-gray-700">{food.name}</span>
                 </p>
-              ))}
+              ) : null}
+              <p className="text-xs text-gray-500 mt-6">
+                Returning to login in {logoutSeconds} second{logoutSeconds === 1 ? "" : "s"}…
+              </p>
             </div>
-            <p className="text-xs italic text-gray-600 mt-4">*If rating is 1-2, specify on remarks</p>
-          </div>
-
-          {error ? (
-            <div className="mb-4 text-center text-red-700 text-sm bg-red-50 border border-red-200 rounded-md px-4 py-2">
-              {error}
-            </div>
-          ) : null}
-
-          <section className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-            <div className="p-6 flex justify-center">
-              <div className="border border-red-500 px-6 py-3 text-center w-full max-w-[520px]">
-                <p className="text-base font-extrabold text-gray-900">{productTitle}</p>
+          ) : (
+            <>
+              <div className="bg-white px-8 py-6 rounded-[10px] mb-6 text-center border border-gray-200">
+                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+                  Hedonic Sensory Evaluation Form
+                </h1>
               </div>
-            </div>
 
-            <div className="divide-y divide-gray-200">
-              <RatingRow label="COLOR" value={ratings.color} onChange={handleSelect("color")} />
-              <RatingRow
-                label="FLAVOR / AROMA"
-                value={ratings.flavorAroma}
-                onChange={handleSelect("flavorAroma")}
-              />
-              <RatingRow
-                label="SALTINESS / SWEETNESS"
-                value={ratings.saltSweet}
-                onChange={handleSelect("saltSweet")}
-              />
-              <RatingRow
-                label="TEXTURE / VISCOSITY"
-                value={ratings.texture}
-                onChange={handleSelect("texture")}
-              />
-              <RatingRow
-                label="OVERALL PROFILE"
-                value={ratings.overall}
-                onChange={handleSelect("overall")}
-              />
-            </div>
-
-            <div className="p-6">
-              <div className="mb-2">
-                <p className="text-xs font-bold text-gray-700 uppercase tracking-wide">REMARKS</p>
+              <div className="bg-white px-8 py-6 rounded-[10px] mb-6 text-center border border-gray-200">
+                <h3 className="text-base font-bold text-gray-900 mb-3">Evaluation Guide</h3>
+                <p className="text-sm text-gray-700 mb-4">
+                  Please evaluate based on the 9-point scale rating below:
+                </p>
+                <div className="space-y-1">
+                  {Array.from({ length: 9 }, (_, i) => 9 - i).map((score) => (
+                    <p key={score} className="text-sm text-gray-800 font-medium">
+                      <span className="font-bold">{score}</span> - {RATING_LABELS[score]}{" "}
+                      <span aria-hidden="true">{getGuideEmoji(score)}</span>
+                    </p>
+                  ))}
+                </div>
+                <p className="text-xs italic text-gray-600 mt-4">*If rating is 1-2, specify on remarks</p>
               </div>
-              <input
-                type="text"
-                value={remarks}
-                onChange={(e) => setRemarks(e.target.value)}
-                placeholder="Enter your remarks here"
-                className="w-full border border-gray-300 rounded-md px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 focus:border-[#e8174a]"
-              />
 
-              <div className="flex justify-center mt-8">
-                <button
-                  type="button"
-                  onClick={() => void handleSubmit()}
-                  disabled={submitting || loading}
-                  className={`bg-red-600 text-white px-16 py-3 rounded-md text-lg font-extrabold border border-black/5 hover:bg-red-700 transition-colors ${
-                    !allSelected || submitting || loading ? "opacity-70 cursor-not-allowed" : ""
-                  }`}
-                >
-                  {submitting ? "Submitting..." : "Submit"}
-                </button>
-              </div>
-            </div>
-          </section>
+              {error ? (
+                <div className="mb-4 text-center text-red-700 text-sm bg-red-50 border border-red-200 rounded-md px-4 py-2">
+                  {error}
+                </div>
+              ) : null}
+
+              <section className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                <div className="p-6 flex justify-center">
+                  <div className="border border-red-500 px-6 py-3 text-center w-full max-w-[520px]">
+                    <p className="text-base font-extrabold text-gray-900">{productTitle}</p>
+                  </div>
+                </div>
+
+                <div className="divide-y divide-gray-200">
+                  <RatingRow label="COLOR" value={ratings.color} onChange={handleSelect("color")} />
+                  <RatingRow
+                    label="FLAVOR / AROMA"
+                    value={ratings.flavorAroma}
+                    onChange={handleSelect("flavorAroma")}
+                  />
+                  <RatingRow
+                    label="SALTINESS / SWEETNESS"
+                    value={ratings.saltSweet}
+                    onChange={handleSelect("saltSweet")}
+                  />
+                  <RatingRow
+                    label="TEXTURE / VISCOSITY"
+                    value={ratings.texture}
+                    onChange={handleSelect("texture")}
+                  />
+                  <RatingRow
+                    label="OVERALL PROFILE"
+                    value={ratings.overall}
+                    onChange={handleSelect("overall")}
+                  />
+                </div>
+
+                <div className="p-6">
+                  <div className="mb-2">
+                    <p className="text-xs font-bold text-gray-700 uppercase tracking-wide">REMARKS</p>
+                  </div>
+                  <input
+                    type="text"
+                    value={remarks}
+                    onChange={(e) => setRemarks(e.target.value)}
+                    placeholder="Enter your remarks here"
+                    className="w-full border border-gray-300 rounded-md px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 focus:border-[#e8174a]"
+                  />
+
+                  <div className="flex justify-center mt-8">
+                    <button
+                      type="button"
+                      onClick={() => void handleSubmit()}
+                      disabled={submitting || loading}
+                      className={`bg-red-600 text-white px-16 py-3 rounded-md text-lg font-extrabold border border-black/5 hover:bg-red-700 transition-colors ${
+                        !allSelected || submitting || loading ? "opacity-70 cursor-not-allowed" : ""
+                      }`}
+                    >
+                      {submitting ? "Submitting..." : "Submit"}
+                    </button>
+                  </div>
+                </div>
+              </section>
+            </>
+          )}
         </div>
       </main>
     </div>

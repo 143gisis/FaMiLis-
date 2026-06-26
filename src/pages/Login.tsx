@@ -1,7 +1,8 @@
 import { useEffect, useId, useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { hasStoredUser } from "../RequireAuth";
+import { hasStoredUser, hasActiveSession } from "../RequireAuth";
+import { setToken } from "../lib/api";
 import logo from "../assets/logo.png";
 import loginBg from "../assets/login-bg.png";
 
@@ -140,11 +141,19 @@ export default function Login() {
         if (data?.user) {
           localStorage.setItem("familis.user", JSON.stringify(data.user));
         }
+        if (typeof data?.token === "string") {
+          setToken(data.token);
+        }
       } catch {
         // ignore storage failures
       }
 
-      navigate("/dashboard");
+      const role = data?.user?.role;
+      if (role === "tester") {
+        navigate(hasActiveSession() ? "/session" : "/consent");
+      } else {
+        navigate("/dashboard");
+      }
     } catch (err) {
       console.error(err);
       setError("Unable to reach the server. Please try again.");

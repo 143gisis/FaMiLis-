@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { performLogout } from "../RequireAuth";
-import logo from "../assets/logo.png";
+import { API_BASE, apiFetch } from "../lib/api";
 import { PageHeader } from "../components/PageHeader";
-import { confidenceToTier } from "../lib/confidence";
+import { FoodCard } from "../components/dashboard";
+import {
+  ColoredRatingBar,
+  FerConfidenceCard,
+  HeroHedonicCard,
+  InsightCard,
+  MetricCard,
+  SectionPill,
+  TabButton,
+} from "../components/analytics";
 import { RATING_LABELS, hedonicColor } from "../lib/ratingLabels";
 import { ATTRIBUTE_COLORS, getDemoColor } from "../lib/attributeColors";
 import {
@@ -31,17 +39,6 @@ ChartJS.register(
 );
 
 type TabKey = "food" | "stats";
-type SessionStatus = "pending" | "active" | "completed" | "cancelled";
-
-type Session = {
-  id: number;
-  userId: number;
-  startTime: string | null;
-  endTime: string | null;
-  status: SessionStatus;
-  frames: number;
-  meanConfidence: number | null; // 0-1
-};
 
 type Food = {
   id: number;
@@ -68,42 +65,11 @@ type Analytics = {
   surveyCount: number;
 };
 
-function clampPct(n: number) {
-  return Math.max(0, Math.min(100, n));
-}
-
-function formatStatus(status: SessionStatus) {
-  return status.charAt(0).toUpperCase() + status.slice(1);
-}
-
-function statusClasses(status: SessionStatus) {
-  switch (status) {
-    case "pending":
-      return "bg-yellow-50 text-yellow-700";
-    case "active":
-      return "bg-green-50 text-green-700";
-    case "completed":
-      return "bg-gray-100 text-gray-700";
-    case "cancelled":
-      return "bg-red-50 text-red-700";
-    default:
-      return "bg-gray-100 text-gray-700";
-  }
-}
-
-const API_BASE = "http://localhost:5000";
 const toApiUrl = (url: string | null) => {
   if (!url) return null;
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
   return `${API_BASE}${url}`;
 };
-
-function formatDateTime(iso: string | null) {
-  if (!iso) return "-";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "-";
-  return d.toLocaleString();
-}
 
 function formatDate(iso: string | null) {
   if (!iso) return "-";
@@ -124,17 +90,23 @@ export default function Dashboard() {
     category: "",
   });
   const [newFoodImageFile, setNewFoodImageFile] = useState<File | null>(null);
-  const [sessionsByFoodId, setSessionsByFoodId] = useState<Record<number, Session[]>>({});
   const [analyticsByFoodId, setAnalyticsByFoodId] = useState<Record<number, Analytics>>({});
   const [foodsLoading, setFoodsLoading] = useState(true);
   const [foodsError, setFoodsError] = useState<string | null>(null);
-  const [sessionsLoading, setSessionsLoading] = useState<Record<number, boolean>>({});
   const [analyticsLoading, setAnalyticsLoading] = useState<Record<number, boolean>>({});
   const [statsError, setStatsError] = useState<string | null>(null);
   const [foodToDelete, setFoodToDelete] = useState<Food | null>(null);
   const [deletingFoodId, setDeletingFoodId] = useState<number | null>(null);
   const [deleteFoodError, setDeleteFoodError] = useState<string | null>(null);
+  const [sessionStatsLoadingFoodId, setSessionStatsLoadingFoodId] = useState<number | null>(null);
+  const [editingFoodImage, setEditingFoodImage] = useState<Food | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [imageModalError, setImageModalError] = useState<string | null>(null);
+  const [imageSaving, setImageSaving] = useState(false);
+  const [imageRemoving, setImageRemoving] = useState(false);
   const foodsAbortRef = useRef<AbortController | null>(null);
+  const imageFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     foodsAbortRef.current?.abort();
@@ -145,7 +117,7 @@ export default function Dashboard() {
       setFoodsLoading(true);
       setFoodsError(null);
       try {
-        const res = await fetch(`${API_BASE}/api/foods`, { signal: ac.signal });
+        const res = await apiFetch(`/api/foods`, { signal: ac.signal });
         const json = await res.json();
         if (!res.ok || !json?.ok) {
           throw new Error(json?.error || "Failed to load foods.");
@@ -168,6 +140,83 @@ export default function Dashboard() {
     return () => ac.abort();
   }, []);
 
+  useEffect(() => {
+    if (!imageFile) {
+      setImagePreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(imageFile);
+    setImagePreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [imageFile]);
+
+  const closeImageModal = () => {
+    setEditingFoodImage(null);
+    setImageFile(null);
+    setImagePreviewUrl(null);
+    setImageModalError(null);
+    setImageSaving(false);
+    setImageRemoving(false);
+    if (imageFileInputRef.current) imageFileInputRef.current.value = "";
+  };
+
+  const openImageModal = (food: Food) => {
+    setEditingFoodImage(food);
+    setImageFile(null);
+    setImagePreviewUrl(null);
+    setImageModalError(null);
+    if (imageFileInputRef.current) imageFileInputRef.current.value = "";
+  };
+
+  const updateFoodImageUrl = (foodId: number, imageUrl: string | null) => {
+    setFoods((prev) => prev.map((f) => (f.id === foodId ? { ...f, imageUrl } : f)));
+  };
+
+  const onSaveFoodImage = async () => {
+    if (!editingFoodImage || !imageFile) return;
+    setImageSaving(true);
+    setImageModalError(null);
+    try {
+      const fd = new FormData();
+      fd.append("image", imageFile);
+      const res = await apiFetch(`/api/foods/${editingFoodImage.id}/image`, {
+        method: "POST",
+        body: fd,
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || "Failed to upload image.");
+      }
+      updateFoodImageUrl(editingFoodImage.id, String(json.imageUrl ?? ""));
+      closeImageModal();
+    } catch (err: any) {
+      setImageModalError(err?.message || "Failed to upload image.");
+    } finally {
+      setImageSaving(false);
+    }
+  };
+
+  const onRemoveFoodImage = async () => {
+    if (!editingFoodImage?.imageUrl) return;
+    setImageRemoving(true);
+    setImageModalError(null);
+    try {
+      const res = await apiFetch(`/api/foods/${editingFoodImage.id}/image`, {
+        method: "DELETE",
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || "Failed to remove image.");
+      }
+      updateFoodImageUrl(editingFoodImage.id, null);
+      closeImageModal();
+    } catch (err: any) {
+      setImageModalError(err?.message || "Failed to remove image.");
+    } finally {
+      setImageRemoving(false);
+    }
+  };
+
   const totalFoods = foods.length;
   const activeFoods = foods.filter((f) => f.sessionsActive > 0).length;
   const categories = new Set(foods.map((f) => f.category)).size;
@@ -188,7 +237,7 @@ export default function Dashboard() {
       setStatsError(null);
       setAnalyticsLoading((p) => ({ ...p, [foodId]: true }));
       try {
-        const res = await fetch(`${API_BASE}/api/foods/${foodId}/analytics`);
+        const res = await apiFetch(`/api/foods/${foodId}/analytics`);
         const json = await res.json();
         if (!res.ok || !json?.ok) {
           throw new Error(json?.error || "Failed to load analytics.");
@@ -414,7 +463,7 @@ export default function Dashboard() {
           border: { color: "rgba(156, 163, 175, 0.35)" },
         },
         y: {
-          min: 0,
+          min: 1,
           max: 9,
           ticks: { stepSize: 1, color: "#9ca3af", font: { size: 11 } },
           grid: { color: "rgba(156, 163, 175, 0.25)" },
@@ -424,27 +473,11 @@ export default function Dashboard() {
     } as const;
   }, []);
 
-  const ensureSessionsLoaded = async (foodId: number) => {
-    if (sessionsByFoodId[foodId]) return;
-    if (sessionsLoading[foodId]) return;
-    setSessionsLoading((p) => ({ ...p, [foodId]: true }));
-    try {
-      const res = await fetch(`${API_BASE}/api/foods/${foodId}/sessions`);
-      const json = await res.json();
-      if (!res.ok || !json?.ok) {
-        throw new Error(json?.error || "Failed to load sessions.");
-      }
-      setSessionsByFoodId((p) => ({ ...p, [foodId]: (json.sessions ?? []) as Session[] }));
-    } finally {
-      setSessionsLoading((p) => ({ ...p, [foodId]: false }));
-    }
-  };
-
   const onDeleteFood = async (foodId: number) => {
     try {
       setDeletingFoodId(foodId);
       setDeleteFoodError(null);
-      const res = await fetch(`${API_BASE}/api/foods/${foodId}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/foods/${foodId}`, { method: "DELETE" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json?.ok) {
         throw new Error(json?.error || "Failed to delete food.");
@@ -469,7 +502,7 @@ export default function Dashboard() {
     if (!name || !category) return;
 
     try {
-      const res = await fetch(`${API_BASE}/api/foods`, {
+      const res = await apiFetch(`/api/foods`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, category }),
@@ -483,7 +516,7 @@ export default function Dashboard() {
       if (newFoodImageFile) {
         const fd = new FormData();
         fd.append("image", newFoodImageFile);
-        const imgRes = await fetch(`${API_BASE}/api/foods/${created.id}/image`, {
+        const imgRes = await apiFetch(`/api/foods/${created.id}/image`, {
           method: "POST",
           body: fd,
         });
@@ -513,6 +546,26 @@ export default function Dashboard() {
     }
   };
 
+  const onOpenLatestSession = async (food: Food) => {
+    if (food.sessionsTotal === 0 || sessionStatsLoadingFoodId != null) return;
+    setSessionStatsLoadingFoodId(food.id);
+    try {
+      const res = await apiFetch(`/api/foods/${food.id}/sessions`);
+      const json = await res.json();
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || "Failed to load sessions.");
+      }
+      const sessions = (json.sessions ?? []) as { id: number }[];
+      const latest = sessions[0];
+      if (!latest) return;
+      navigate(`/session-detail?sessionId=${latest.id}`);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSessionStatsLoadingFoodId(null);
+    }
+  };
+
   return (
     <div
       className="min-h-screen bg-[#f6f7fb]"
@@ -521,7 +574,7 @@ export default function Dashboard() {
       <PageHeader />
 
       <main className="px-6 py-8">
-        <div className="max-w-5xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           {/* Title */}
           <div className="text-center mb-6">
             <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Food Testing Hub</h1>
@@ -550,9 +603,9 @@ export default function Dashboard() {
 
           {/* Stat cards */}
           <div className="grid grid-cols-3 gap-4 mb-5">
-            <StatCard icon="🍽️" label="Total Foods" value={totalFoods} />
-            <StatCard icon="✅" label="Active Foods" value={activeFoods} />
-            <StatCard icon="🏷️" label="Categories" value={categories} />
+            <MetricCard icon="🍽️" iconBg="bg-red-50 text-[#e8174a]" title="Total Foods" value={String(totalFoods)} />
+            <MetricCard icon="✅" iconBg="bg-green-50 text-green-600" title="Active Foods" value={String(activeFoods)} />
+            <MetricCard icon="🏷️" iconBg="bg-blue-50 text-blue-600" title="Categories" value={String(categories)} />
           </div>
 
           {/* Tabs */}
@@ -585,147 +638,22 @@ export default function Dashboard() {
                   <p className="text-xs mt-1">Click "Add New Food" to register your first product for testing.</p>
                 </div>
               ) : (
-                <div className="divide-y divide-gray-100">
-                  {foods.map((food) => {
-                    const isExpanded = expandedFoodId === food.id;
-                    const sessions = sessionsByFoodId[food.id] ?? [];
-                    return (
-                      <div key={food.id} className="py-4 first:pt-0 last:pb-0">
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="text-sm font-semibold text-gray-900 truncate">
-                                <span className="inline-flex items-center gap-2">
-                                  {food.imageUrl ? (
-                                    <img
-                                      src={toApiUrl(food.imageUrl) ?? undefined}
-                                      alt={food.name}
-                                      className="w-8 h-8 rounded-md border border-gray-200 object-cover"
-                                    />
-                                  ) : (
-                                    <span className="w-8 h-8 rounded-md border border-dashed border-gray-300 bg-gray-50 inline-flex items-center justify-center text-[10px] text-gray-400">
-                                      IMG
-                                    </span>
-                                  )}
-                                  <span className="truncate">{food.name}</span>
-                                </span>
-                              </p>
-                              <Badge
-                                className={
-                                  food.sessionsActive > 0
-                                    ? "bg-green-50 text-green-700"
-                                    : "bg-gray-100 text-gray-600"
-                                }
-                              >
-                                {food.sessionsActive > 0 ? "Active session" : "No active sessions"}
-                              </Badge>
-                              <Badge className="bg-blue-50 text-blue-700">
-                                {food.sessionsTotal} session{food.sessionsTotal === 1 ? "" : "s"}
-                              </Badge>
-                            </div>
-
-                            <div className="mt-2 space-y-0.5 text-xs text-gray-500">
-                              <p>
-                                <span className="text-gray-700 font-semibold">Category:</span>{" "}
-                                {food.category}
-                              </p>
-                              <p>
-                                <span className="text-gray-700 font-semibold">Duration:</span>{" "}
-                                {food.avgDurationMin == null ? "-" : `${Math.round(food.avgDurationMin)} minutes (avg)`}
-                              </p>
-                              <p>
-                                <span className="text-gray-700 font-semibold">Created:</span>{" "}
-                                {formatDate(food.createdAt)}
-                              </p>
-                            </div>
-
-                            <div className="flex items-center gap-4 mt-3">
-                              <button
-                                type="button"
-                                onClick={() => setFoodToDelete(food)}
-                                className="text-xs font-semibold text-[#e8174a] hover:text-[#c9143f] transition-colors inline-flex items-center gap-1"
-                              >
-                                <span aria-hidden="true">🗑️</span>
-                                Delete
-                              </button>
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  const next = isExpanded ? null : food.id;
-                                  setExpandedFoodId(next);
-                                  if (next != null) await ensureSessionsLoaded(next);
-                                }}
-                                className="text-xs font-semibold text-gray-600 hover:text-gray-900 transition-colors inline-flex items-center gap-1"
-                              >
-                                <span aria-hidden="true">{isExpanded ? "🔼" : "🔽"}</span>
-                                {isExpanded ? "Hide Sessions" : "View Sessions"}
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-
-                        {isExpanded && (
-                          <div className="mt-4 pt-4 border-t border-gray-100">
-                            <h3 className="text-xs text-gray-700 font-bold mb-2">
-                              Testing Sessions
-                            </h3>
-
-                            {sessionsLoading[food.id] ? (
-                              <div className="text-xs text-gray-500">Loading sessions…</div>
-                            ) : sessions.length === 0 ? (
-                              <div className="text-xs text-gray-500">No sessions yet.</div>
-                            ) : (
-                              <div className="space-y-2">
-                                {sessions.map((s) => (
-                                  <div
-                                    key={s.id}
-                                    className="bg-gray-50 rounded-md p-3 hover:bg-gray-100 transition-colors"
-                                  >
-                                    <div className="flex items-start justify-between gap-3 mb-2">
-                                      <div className="flex items-center gap-2">
-                                        <p className="text-xs font-semibold text-gray-900">
-                                          S-{s.id}
-                                        </p>
-                                        <Badge className={statusClasses(s.status)}>{formatStatus(s.status)}</Badge>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => navigate(`/session-detail?sessionId=${s.id}`)}
-                                        className="text-xs font-semibold text-[#e8174a] hover:text-[#c9143f] transition-colors"
-                                      >
-                                        View Details
-                                      </button>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
-                                      <div>
-                                        <span className="text-gray-500">Start:</span>{" "}
-                                        <span className="text-gray-700">{formatDateTime(s.startTime)}</span>
-                                      </div>
-                                      <div>
-                                        <span className="text-gray-500">End:</span>{" "}
-                                        <span className="text-gray-700">{formatDateTime(s.endTime)}</span>
-                                      </div>
-                                      <div>
-                                        <span className="text-gray-500">Frames:</span>{" "}
-                                        <span className="text-gray-700">{s.frames}</span>
-                                      </div>
-                                      <div>
-                                        <span className="text-gray-500">Confidence:</span>{" "}
-                                        <span className="text-gray-700">
-                                          {s.meanConfidence == null ? "-" : `${Math.round(s.meanConfidence * 100)}%`}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {foods.map((food) => (
+                    <FoodCard
+                      key={food.id}
+                      food={food}
+                      imageSrc={toApiUrl(food.imageUrl)}
+                      isSelected={expandedFoodId === food.id}
+                      formatDate={formatDate}
+                      onSelect={() => setExpandedFoodId(food.id)}
+                      onImageClick={() => openImageModal(food)}
+                      onDelete={() => setFoodToDelete(food)}
+                      onStartSession={() => navigate("/setup", { state: { foodId: food.id } })}
+                      onSessionStats={() => void onOpenLatestSession(food)}
+                      sessionStatsLoading={sessionStatsLoadingFoodId === food.id}
+                    />
+                  ))}
                 </div>
               )}
             </section>
@@ -770,312 +698,232 @@ export default function Dashboard() {
                 ) : null}
 
                 {analyticsIssues.length > 0 ? (
-                  <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                  <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-4 py-2">
                     {analyticsIssues.join(" ")}
                   </div>
                 ) : null}
 
-                {hideAnalyticsGraphs ? (
-                  <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-md px-3 py-2">
+                {selectedFood && !analyticsLoading[selectedFood.id] && !hideAnalyticsGraphs ? (
+                  <>
+                    <div>
+                      <SectionPill>Product Analytics</SectionPill>
+                      <p className="text-xs text-gray-500 -mt-1 mb-4">
+                        {selectedFood.name} · Live analytics from DB
+                      </p>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[1fr_1.2fr] gap-4 mb-4">
+                        <HeroHedonicCard
+                          score={stats.surveyCount > 0 ? stats.meanHedonic : null}
+                        />
+                        <FerConfidenceCard meanConfidence={stats.meanConfidence} />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <InsightCard
+                          title="Sample Size (N)"
+                          value={String(stats.surveyCount)}
+                          sub={
+                            stats.surveyCount < 5
+                              ? "Need at least 5 surveys for reliable trends"
+                              : "Completed survey responses for this product"
+                          }
+                        />
+                        <MetricCard
+                          icon="📋"
+                          iconBg="bg-blue-50 text-blue-600"
+                          title="Testing Sessions"
+                          value={String(stats.sessionCount)}
+                        />
+                        <MetricCard
+                          icon="📷"
+                          iconBg="bg-green-50 text-green-600"
+                          title="Frames Analyzed"
+                          value={String(stats.frameLogCount)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="relative space-y-6">
+                      {stats.surveyCount < 5 ? (
+                        <div className="absolute inset-0 z-10 flex items-start justify-center pt-20 pointer-events-none">
+                          <div className="bg-white/90 border border-gray-200 rounded-xl shadow px-5 py-4 text-center max-w-xs pointer-events-auto">
+                            <p className="text-sm font-bold text-gray-800 mb-1">Low sample size</p>
+                            <p className="text-xs text-gray-500">
+                              Need at least 5 surveys for reliable trends.{" "}
+                              <span className="font-semibold text-gray-700">
+                                Currently: {stats.surveyCount}
+                              </span>
+                            </p>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div
+                        className={
+                          stats.surveyCount < 5
+                            ? "opacity-30 pointer-events-none select-none space-y-6"
+                            : "space-y-6"
+                        }
+                      >
+                        <div>
+                          <SectionPill>Reaction Distribution</SectionPill>
+                          <p className="text-xs text-gray-500 -mt-1 mb-4">
+                            Do consumers like this product? (frame-by-frame FER)
+                          </p>
+                          <div className="bg-gray-50 rounded-xl border border-gray-100 p-4 flex flex-col sm:flex-row items-center gap-6">
+                            <div
+                              className="w-32 h-32 rounded-full border border-gray-100 shadow-sm flex-shrink-0"
+                              style={{
+                                background:
+                                  Number(stats.frameLogCount ?? 0) <= 0
+                                    ? "conic-gradient(#e5e7eb 0% 100%)"
+                                    : `conic-gradient(${stats.distribution
+                                        .map((d, i) => {
+                                          const start =
+                                            i === 0
+                                              ? 0
+                                              : stats.distribution
+                                                  .slice(0, i)
+                                                  .reduce((a, b) => a + b.value, 0);
+                                          const end = start + d.value;
+                                          return `${d.color} ${start}% ${end}%`;
+                                        })
+                                        .join(", ")})`,
+                              }}
+                              aria-label="Reaction distribution pie chart"
+                            />
+                            <div className="space-y-1.5 w-full sm:flex-1">
+                              {stats.distribution.map((d) => (
+                                <div key={d.label} className="flex items-center gap-1.5 text-sm">
+                                  <span
+                                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                    style={{ backgroundColor: d.color }}
+                                    aria-hidden="true"
+                                  />
+                                  <span className="text-gray-600">
+                                    {d.label}: <span className="font-semibold text-gray-900">{d.value}%</span>
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <SectionPill>Sensory Attributes</SectionPill>
+                          <p className="text-xs text-gray-500 -mt-1 mb-4">
+                            What consumers like about the product (survey-based)
+                          </p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="bg-gray-50 rounded-lg border border-gray-100 p-4">
+                              <p className="text-xs text-gray-600 font-semibold mb-2">Spider chart</p>
+                              <div className="min-h-[200px] h-[240px]">
+                                <Radar data={radarChartData as any} options={radarChartOptions as any} />
+                              </div>
+                            </div>
+                            <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
+                              {stats.radar.map((r) => (
+                                <ColoredRatingBar
+                                  key={r.label}
+                                  label={r.label}
+                                  rating={r.score}
+                                  color={ATTRIBUTE_COLORS[r.label] ?? "#e8174a"}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <SectionPill>FER Timeline</SectionPill>
+                          <p className="text-xs text-gray-500 -mt-1 mb-4">
+                            Emotion over time during testing
+                          </p>
+                          <div className="bg-gray-50 rounded-lg border border-gray-100 p-4">
+                            <p className="text-xs text-gray-600 font-semibold mb-2">
+                              Hedonic score over session phases
+                            </p>
+                            <div className="min-h-[180px] h-[220px]">
+                              <Line data={lineChartData as any} options={lineChartOptions as any} />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <SectionPill>Demographics</SectionPill>
+                          <p className="text-xs text-gray-500 -mt-1 mb-4">
+                            Consumer profile and survey-based hedonic scores
+                          </p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
+                              <p className="text-xs text-gray-700 font-semibold mb-3">
+                                Hedonic Score by Age Group
+                              </p>
+                              {stats.byAge.length === 0 ? (
+                                <p className="text-xs text-gray-500">No age data yet.</p>
+                              ) : (
+                                stats.byAge.map((a, i) => (
+                                  <ColoredRatingBar
+                                    key={a.label}
+                                    label={a.label}
+                                    rating={a.score}
+                                    color={getDemoColor(i)}
+                                  />
+                                ))
+                              )}
+                            </div>
+                            <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
+                              <p className="text-xs text-gray-700 font-semibold mb-3">
+                                Hedonic Score by Gender
+                              </p>
+                              {stats.byGender.length === 0 ? (
+                                <p className="text-xs text-gray-500">No gender data yet.</p>
+                              ) : (
+                                stats.byGender.map((g, i) => (
+                                  <ColoredRatingBar
+                                    key={g.label}
+                                    label={g.label}
+                                    rating={g.score}
+                                    color={getDemoColor(i + 3)}
+                                  />
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <SectionPill>9-Point Hedonic Scale Reference</SectionPill>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 mt-3">
+                            {Array.from({ length: 9 }, (_, i) => 9 - i).map((score) => {
+                              const isPositive = score >= 7;
+                              const isNegative = score <= 4;
+                              return (
+                                <div
+                                  key={score}
+                                  className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${
+                                    isPositive
+                                      ? "bg-green-50 text-green-800"
+                                      : isNegative
+                                        ? "bg-red-50 text-red-800"
+                                        : "bg-yellow-50 text-yellow-800"
+                                  }`}
+                                >
+                                  <span className="font-bold w-4 text-center tabular-nums">{score}</span>
+                                  <span>{RATING_LABELS[score]}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : selectedFood && !analyticsLoading[selectedFood.id] && hideAnalyticsGraphs ? (
+                  <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-md px-4 py-2">
                     Graphs are hidden until required analytics data is available.
                   </div>
-                ) : (
-                  <div className="relative">
-                    {/* Low-N overlay */}
-                    {stats.surveyCount < 5 && (
-                      <div className="absolute inset-0 z-10 flex items-start justify-center pt-16 pointer-events-none">
-                        <div className="bg-white/90 border border-gray-200 rounded-xl shadow px-5 py-4 text-center max-w-xs pointer-events-auto">
-                          <p className="text-sm font-bold text-gray-800 mb-1">Low sample size</p>
-                          <p className="text-xs text-gray-500">
-                            Need at least 5 surveys for reliable trends.{" "}
-                            <span className="font-semibold text-gray-700">
-                              Currently: {stats.surveyCount}
-                            </span>
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                    <div className={stats.surveyCount < 5 ? "opacity-30 pointer-events-none select-none" : ""}>
-                    {/* A */}
-                    <div>
-                      <h3 className="text-sm font-bold text-gray-900 mb-1">
-                        A. Frame-by-Frame Hedonic Score Distribution Report
-                      </h3>
-                      <p className="text-xs text-gray-500 mb-4">
-                        Do consumers like this product?
-                      </p>
-
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                        {/* 1 — Sample Size */}
-                        <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
-                          <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider mb-1">
-                            Sample Size
-                          </p>
-                          <p className="text-3xl leading-none font-extrabold text-gray-900 mt-2">
-                            {stats.surveyCount}
-                          </p>
-                          <p className="text-[11px] text-gray-400 mt-1">survey responses</p>
-                        </div>
-
-                        {/* 2 — Final Hedonic Score (color-coded) */}
-                        {(() => {
-                          const cl = Math.max(1, Math.min(9, stats.meanHedonic));
-                          const tVal = (cl - 1) / 8;
-                          const hue = Math.round(tVal * 120);
-                          const textColor = `hsl(${hue}, 82%, ${Math.round(44 + tVal * 4)}%)`;
-                          const bgColor   = `hsl(${hue}, 80%, 96%)`;
-                          const border    = `hsl(${hue}, 60%, 85%)`;
-                          return (
-                            <div className="rounded-xl border p-4" style={{ backgroundColor: bgColor, borderColor: border }}>
-                              <p className="text-[11px] font-semibold uppercase tracking-wider mb-1" style={{ color: textColor }}>
-                                Final Hedonic Score
-                              </p>
-                              <p className="text-3xl leading-none font-extrabold mt-2" style={{ color: textColor }}>
-                                {stats.meanHedonic.toFixed(1)}
-                              </p>
-                              <p className="text-[11px] mt-1" style={{ color: textColor, opacity: 0.7 }}>out of 9</p>
-                            </div>
-                          );
-                        })()}
-
-                        {/* 3 — FER Confidence */}
-                        {(() => {
-                          const tier = confidenceToTier(stats.meanConfidence);
-                          return (
-                            <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
-                              <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider mb-1">
-                                FER Confidence
-                              </p>
-                              <div className="flex items-end gap-1.5 mt-2">
-                                <p className="text-3xl leading-none font-extrabold text-gray-900">
-                                  {Math.round(stats.meanConfidence * 100)}%
-                                </p>
-                                <span
-                                  className={`mb-0.5 text-[10px] font-bold px-2 py-0.5 rounded-full ${tier.bgClass} ${tier.textClass}`}
-                                  title={`Confidence tier: ${tier.label}`}
-                                >
-                                  {tier.label}
-                                </span>
-                              </div>
-                              <div className="mt-2 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                                <div
-                                  className={`h-full rounded-full ${tier.colorClass}`}
-                                  style={{ width: `${Math.round(stats.meanConfidence * 100)}%` }}
-                                />
-                              </div>
-                            </div>
-                          );
-                        })()}
-
-                        {/* 4 — Reaction Distribution pie */}
-                        <div className="flex flex-col items-center justify-center">
-                          <p className="text-xs text-gray-600 mb-2 text-center">Reaction Distribution</p>
-                          <div
-                            className="w-28 h-28 sm:w-32 sm:h-32 rounded-full border border-gray-100 shadow-sm flex-shrink-0"
-                            style={{
-                              background:
-                                Number(stats.frameLogCount ?? 0) <= 0
-                                  ? "conic-gradient(#e5e7eb 0% 100%)"
-                                  : `conic-gradient(${stats.distribution
-                                      .map((d, i) => {
-                                        const start =
-                                          i === 0
-                                            ? 0
-                                            : stats.distribution
-                                                .slice(0, i)
-                                                .reduce((a, b) => a + b.value, 0);
-                                        const end = start + d.value;
-                                        return `${d.color} ${start}% ${end}%`;
-                                      })
-                                      .join(", ")})`,
-                            }}
-                            aria-label="Pie chart"
-                          />
-                          <div className="mt-2 space-y-0.5 w-full">
-                            {stats.distribution.map((d) => (
-                              <div key={d.label} className="flex items-center gap-1.5 text-[11px]">
-                                <span
-                                  className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                                  style={{ backgroundColor: d.color }}
-                                  aria-hidden="true"
-                                />
-                                <span className="text-gray-600 leading-tight">
-                                  {d.label}: {d.value}%
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* B */}
-                    <div className="border-t border-gray-100 pt-6">
-                      <h3 className="text-sm font-bold text-gray-900 mb-1">
-                        B. Survey-Based Attribute Radar Report
-                      </h3>
-                      <p className="text-xs text-gray-500 mb-4">
-                        What consumers like about the product (based on session survey logs)
-                      </p>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
-                          <p className="text-xs text-gray-700 font-semibold mb-2">Spider chart</p>
-                          <div className="min-h-[200px] h-[240px]">
-                            <Radar data={radarChartData as any} options={radarChartOptions as any} />
-                          </div>
-                        </div>
-
-                        <div className="space-y-3">
-                          {stats.radar.map((r) => {
-                            const isOverall = r.label === "Overall";
-                            const color = ATTRIBUTE_COLORS[r.label] ?? "#e8174a";
-                            return (
-                              <div
-                                key={r.label}
-                                className={isOverall ? "border-t border-gray-100 pt-3 mt-1" : ""}
-                              >
-                                <div className="flex items-center justify-between mb-1">
-                                  <span className="text-xs text-gray-600 flex items-center gap-1.5">
-                                    <span
-                                      className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0"
-                                      style={{ backgroundColor: color }}
-                                      aria-hidden="true"
-                                    />
-                                    {r.label}
-                                  </span>
-                                  <span className="text-xs text-gray-900 font-semibold">
-                                    {r.score.toFixed(1)} / 9
-                                  </span>
-                                </div>
-                                <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
-                                  <div
-                                    className="h-full rounded-full"
-                                    style={{
-                                      width: `${clampPct((r.score / 9) * 100)}%`,
-                                      backgroundColor: color,
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* C */}
-                    <div className="border-t border-gray-100 pt-6">
-                      <h3 className="text-sm font-bold text-gray-900 mb-1">
-                        C. FER Timeline Report
-                      </h3>
-                      <p className="text-xs text-gray-500 mb-4">
-                        Emotion over time during testing
-                      </p>
-
-                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
-                        <div className="min-h-[160px] h-[190px]">
-                          <Line data={lineChartData as any} options={lineChartOptions as any} />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* D */}
-                    <div className="border-t border-gray-100 pt-6">
-                      <h3 className="text-sm font-bold text-gray-900 mb-1">
-                        D. Demographics Report
-                      </h3>
-                      <p className="text-xs text-gray-500 mb-4">
-                        Consumer profile and survey-based hedonic scores
-                      </p>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                          <p className="text-xs text-gray-700 font-semibold mb-3">
-                            Hedonic Score by Age Group
-                          </p>
-                          <div className="space-y-2">
-                            {stats.byAge.map((a, i) => (
-                              <div key={a.label}>
-                                <div className="flex items-center justify-between text-xs mb-1">
-                                  <span className="text-gray-600">{a.label}</span>
-                                  <span className="text-gray-900 font-semibold">
-                                    {a.score.toFixed(1)}
-                                  </span>
-                                </div>
-                                <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
-                                  <div
-                                    className="h-full rounded-full"
-                                    style={{
-                                      width: `${clampPct((a.score / 9) * 100)}%`,
-                                      backgroundColor: getDemoColor(i),
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div>
-                          <p className="text-xs text-gray-700 font-semibold mb-3">
-                            Hedonic Score by Gender
-                          </p>
-                          <div className="space-y-2">
-                            {stats.byGender.map((g, i) => (
-                              <div key={g.label}>
-                                <div className="flex items-center justify-between text-xs mb-1">
-                                  <span className="text-gray-600">{g.label}</span>
-                                  <span className="text-gray-900 font-semibold">
-                                    {g.score.toFixed(1)}
-                                  </span>
-                                </div>
-                                <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
-                                  <div
-                                    className="h-full rounded-full"
-                                    style={{
-                                      width: `${clampPct((g.score / 9) * 100)}%`,
-                                      backgroundColor: getDemoColor(i + 3),
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* 1–9 hedonic legend */}
-                    <div className="border-t border-gray-100 pt-6">
-                      <h3 className="text-sm font-bold text-gray-900 mb-3">
-                        9-Point Hedonic Scale Reference
-                      </h3>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-1">
-                        {Array.from({ length: 9 }, (_, i) => 9 - i).map((score) => {
-                          const isPositive = score >= 7;
-                          const isNegative = score <= 4;
-                          return (
-                            <div
-                              key={score}
-                              className={`flex items-center gap-2 px-2 py-1 rounded text-xs ${
-                                isPositive
-                                  ? "bg-green-50 text-green-800"
-                                  : isNegative
-                                    ? "bg-red-50 text-red-800"
-                                    : "bg-yellow-50 text-yellow-800"
-                              }`}
-                            >
-                              <span className="font-bold w-4 text-center">{score}</span>
-                              <span>{RATING_LABELS[score]}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    </div>
-                  </div>
-                )}
+                ) : null}
               </div>
             </section>
           )}
@@ -1168,68 +1016,82 @@ export default function Dashboard() {
           </div>
         </div>
       ) : null}
-    </div>
-  );
-}
 
-function StatCard({ icon, label, value }: { icon: string; label: string; value: number }) {
-  return (
-    <div className="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3 shadow-sm">
-      <span className="text-2xl w-10 h-10 flex items-center justify-center rounded-lg bg-red-50 flex-shrink-0">
-        {icon}
-      </span>
-      <div className="min-w-0">
-        <p className="text-xs text-gray-500 font-semibold truncate">{label}</p>
-        <p className="text-2xl leading-none text-gray-900 font-bold mt-1">{value}</p>
-      </div>
-    </div>
-  );
-}
+      {editingFoodImage ? (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
+            <h2 className="text-gray-900 font-bold mb-1">Food image</h2>
+            <p className="text-sm text-gray-500 mb-4">{editingFoodImage.name}</p>
 
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${
-        active ? "bg-[#e8174a] text-white" : "bg-white text-gray-600 hover:bg-gray-50"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
+            <div className="aspect-[3/2] rounded-lg overflow-hidden border border-gray-200 bg-gray-50 mb-4">
+              {imagePreviewUrl || toApiUrl(editingFoodImage.imageUrl) ? (
+                <img
+                  src={imagePreviewUrl ?? toApiUrl(editingFoodImage.imageUrl) ?? undefined}
+                  alt={editingFoodImage.name}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center text-gray-400">
+                  <span className="text-3xl mb-1" aria-hidden="true">
+                    🍽️
+                  </span>
+                  <span className="text-xs font-medium">No image</span>
+                </div>
+              )}
+            </div>
 
-function Badge({ className, children }: { className: string; children: React.ReactNode }) {
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${className}`}>
-      {children}
-    </span>
-  );
-}
+            <input
+              ref={imageFileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => setImageFile(e.target.files?.[0] ?? null)}
+            />
 
-function MetricCard({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
-      <p className="text-xs text-gray-500 font-semibold">{title}</p>
-      {subtitle ? <p className="text-[11px] text-gray-400 mt-0.5">{subtitle}</p> : null}
-      <div className="mt-2">{children}</div>
+            <button
+              type="button"
+              onClick={() => imageFileInputRef.current?.click()}
+              disabled={imageSaving || imageRemoving}
+              className="w-full border border-gray-200 text-gray-700 hover:bg-gray-50 py-2 rounded-md text-sm font-semibold transition-colors disabled:opacity-50"
+            >
+              {editingFoodImage.imageUrl || imageFile ? "Choose new image" : "Choose image"}
+            </button>
+
+            {imageModalError ? (
+              <p className="text-xs text-red-600 mt-3">{imageModalError}</p>
+            ) : null}
+
+            <div className="flex flex-wrap gap-3 mt-5">
+              <button
+                type="button"
+                onClick={closeImageModal}
+                disabled={imageSaving || imageRemoving}
+                className="flex-1 min-w-[100px] border border-gray-200 text-gray-700 hover:bg-gray-50 py-2 rounded-md text-sm font-semibold transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              {editingFoodImage.imageUrl ? (
+                <button
+                  type="button"
+                  onClick={() => void onRemoveFoodImage()}
+                  disabled={imageSaving || imageRemoving}
+                  className="flex-1 min-w-[100px] border border-red-200 text-red-700 hover:bg-red-50 py-2 rounded-md text-sm font-semibold transition-colors disabled:opacity-50"
+                >
+                  {imageRemoving ? "Removing…" : "Remove image"}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void onSaveFoodImage()}
+                disabled={!imageFile || imageSaving || imageRemoving}
+                className="flex-1 min-w-[100px] bg-[#e8174a] hover:bg-[#c9143f] text-white py-2 rounded-md text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {imageSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1243,90 +1105,14 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function HeroKpiBlock({
-  meanHedonic,
-  surveyCount,
-  meanConfidence,
-}: {
-  meanHedonic: number;
-  surveyCount: number;
-  meanConfidence: number;
-}) {
-  const tier = confidenceToTier(meanConfidence);
-
-  // Dynamic color variants for the hedonic score card
-  const clamped = Math.max(1, Math.min(9, meanHedonic));
-  const t = (clamped - 1) / 8;
-  const hue = Math.round(t * 120);
-  const hedonicTextColor = `hsl(${hue}, 82%, ${Math.round(44 + t * 4)}%)`;
-  const hedonicBgColor   = `hsl(${hue}, 80%, 96%)`;
-  const hedonicBorderColor = `hsl(${hue}, 60%, 85%)`;
-
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pb-2">
-      {/* 1 — Sample Size */}
-      <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
-        <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider mb-1">
-          Sample Size
-        </p>
-        <p className="text-4xl leading-none font-extrabold text-gray-900">
-          {surveyCount}
-        </p>
-        <p className="text-[11px] text-gray-400 mt-1">survey responses</p>
-      </div>
-
-      {/* 2 — Final Hedonic Score (color-coded by score) */}
-      <div
-        className="col-span-2 sm:col-span-1 rounded-xl border p-4"
-        style={{ backgroundColor: hedonicBgColor, borderColor: hedonicBorderColor }}
-      >
-        <p
-          className="text-[11px] font-semibold uppercase tracking-wider mb-1"
-          style={{ color: hedonicTextColor }}
-        >
-          Final Hedonic Score
-        </p>
-        <p
-          className="text-[clamp(2rem,5vw,2.75rem)] leading-none font-extrabold"
-          style={{ color: hedonicTextColor }}
-        >
-          {meanHedonic.toFixed(1)}
-        </p>
-        <p className="text-[11px] mt-1" style={{ color: hedonicTextColor, opacity: 0.7 }}>
-          out of 9
-        </p>
-      </div>
-
-      {/* 3 — FER Confidence */}
-      <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
-        <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider mb-1">
-          FER Confidence
-        </p>
-        <div className="flex items-end gap-2 mt-1">
-          <p className="text-[clamp(1.5rem,3vw,1.75rem)] leading-none font-extrabold text-gray-900">
-            {Math.round(meanConfidence * 100)}%
-          </p>
-          <span
-            className={`mb-0.5 text-[10px] font-bold px-2 py-0.5 rounded-full ${tier.bgClass} ${tier.textClass}`}
-            title={`Confidence tier: ${tier.label}`}
-          >
-            {tier.label}
-          </span>
-        </div>
-        <div className="mt-2 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full ${tier.colorClass}`}
-            style={{ width: `${Math.round(meanConfidence * 100)}%` }}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function AnalyticsSkeleton() {
   return (
     <div className="space-y-4 animate-pulse" aria-hidden="true">
+      <div className="h-6 bg-gray-100 rounded-full w-40" />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="h-40 bg-gray-100 rounded-xl" />
+        <div className="h-40 bg-gray-100 rounded-xl" />
+      </div>
       <div className="grid grid-cols-3 gap-3">
         {[0, 1, 2].map((i) => (
           <div key={i} className="h-20 bg-gray-100 rounded-xl" />

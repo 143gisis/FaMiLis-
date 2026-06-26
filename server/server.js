@@ -1,9 +1,10 @@
 import express from "express";
 import cors from "cors";
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import { initDb } from "./init.js";
 import multer from "multer";
-import { mkdir, readFile } from "fs/promises";
+import { mkdir, readFile, unlink } from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -21,6 +22,58 @@ await mkdir(foodUploadsDir, { recursive: true });
 await mkdir(frameLogsRoot, { recursive: true });
 
 const EMOTION_SERVICE_URL = (process.env.EMOTION_SERVICE_URL || "http://127.0.0.1:8765").replace(/\/$/, "");
+
+const JWT_SECRET = process.env.JWT_SECRET || "familis-dev-secret-change-me";
+const TOKEN_TTL = process.env.JWT_TTL || "8h";
+
+// `staff` is treated as admin-equivalent across the app (legacy role).
+function isAdminRole(role) {
+  return role === "admin" || role === "staff";
+}
+
+function signToken(user) {
+  return jwt.sign(
+    { userId: user.id, role: user.role, email: user.email, username: user.username },
+    JWT_SECRET,
+    { expiresIn: TOKEN_TTL }
+  );
+}
+
+// Public API paths (relative to the /api mount) that skip authentication.
+const PUBLIC_API_PATHS = new Set(["/login", "/health"]);
+
+function requireAuth(req, res, next) {
+  if (PUBLIC_API_PATHS.has(req.path)) return next();
+  const header = req.headers.authorization || "";
+  const match = /^Bearer\s+(.+)$/i.exec(header);
+  if (!match) {
+    return res.status(401).json({ ok: false, error: "Authentication required." });
+  }
+  try {
+    const payload = jwt.verify(match[1], JWT_SECRET);
+    req.user = {
+      id: payload.userId,
+      role: payload.role,
+      email: payload.email,
+      username: payload.username,
+    };
+    return next();
+  } catch {
+    return res.status(401).json({ ok: false, error: "Invalid or expired token." });
+  }
+}
+
+function requireRole(...roles) {
+  const allowed = new Set(roles);
+  return (req, res, next) => {
+    const role = req.user?.role;
+    if (!role) return res.status(401).json({ ok: false, error: "Authentication required." });
+    if (allowed.has(role) || (allowed.has("admin") && role === "staff")) {
+      return next();
+    }
+    return res.status(403).json({ ok: false, error: "Insufficient permissions." });
+  };
+}
 
 async function clearEmotionHistory(sessionId) {
   try {
@@ -105,6 +158,9 @@ async function start() {
     }
   }
 
+  // Gate every /api/* route except login and health (see PUBLIC_API_PATHS).
+  app.use("/api", requireAuth);
+
   // Simple health endpoint to verify server + DB
   app.get("/api/health", async (_req, res) => {
     try {
@@ -164,14 +220,17 @@ async function start() {
         return res.status(401).json({ ok: false, error: "Invalid email or password." });
       }
 
+      const safeUser = {
+        id: user.user_id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+      };
+
       return res.json({
         ok: true,
-        user: {
-          id: user.user_id,
-          username: user.username,
-          email: user.email,
-          role: user.role,
-        },
+        user: safeUser,
+        token: signToken(safeUser),
       });
     } catch (err) {
       console.error("Login error:", err);
@@ -291,6 +350,69 @@ async function start() {
     }
   });
 
+  // Log a participant's facial-recording consent (audit trail).
+  app.post("/api/consent", async (req, res) => {
+    const { sessionId, participantId, deviceId, facialRecording, consentVersion } = req.body ?? {};
+
+    const device = typeof deviceId === "string" ? deviceId.trim() : "";
+    if (!device) {
+      return res.status(400).json({ ok: false, error: "deviceId is required." });
+    }
+    if (facialRecording !== true) {
+      return res.status(400).json({ ok: false, error: "facial recording consent is required." });
+    }
+
+    const sId =
+      sessionId == null || sessionId === "" ? null : Number.parseInt(String(sessionId), 10);
+    const pId =
+      participantId == null || participantId === ""
+        ? null
+        : Number.parseInt(String(participantId), 10);
+    if ((sId != null && !Number.isFinite(sId)) || (pId != null && !Number.isFinite(pId))) {
+      return res.status(400).json({ ok: false, error: "Invalid sessionId or participantId." });
+    }
+
+    const version =
+      typeof consentVersion === "string" && consentVersion.trim() ? consentVersion.trim() : "1.0";
+
+    try {
+      if (sId != null) {
+        const [[sessionRow]] = await pool.query(
+          `SELECT session_id FROM sessions WHERE session_id = ? LIMIT 1`,
+          [sId]
+        );
+        if (!sessionRow) {
+          return res.status(404).json({ ok: false, error: "Session not found." });
+        }
+      }
+
+      const ipAddress = (req.ip || req.socket?.remoteAddress || "").slice(0, 45) || null;
+      const [result] = await pool.query(
+        `
+        INSERT INTO consent (session_id, participant_id, device_id, facial_recording, consent_version, ip_address)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `,
+        [sId, pId, device, true, version, ipAddress]
+      );
+
+      return res.json({
+        ok: true,
+        consent: {
+          id: Number(result.insertId),
+          sessionId: sId,
+          participantId: pId,
+          deviceId: device,
+          facialRecording: true,
+          consentVersion: version,
+          agreedAt: new Date().toISOString(),
+        },
+      });
+    } catch (err) {
+      console.error("POST /api/consent error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
   // Foods list for dashboard
   app.get("/api/foods", async (_req, res) => {
     try {
@@ -394,6 +516,47 @@ async function start() {
       return res.json({ ok: true, imageUrl });
     } catch (err) {
       console.error("POST /api/foods/:foodId/image error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
+  app.delete("/api/foods/:foodId/image", async (req, res) => {
+    const foodId = Number.parseInt(req.params.foodId, 10);
+    if (!Number.isFinite(foodId)) {
+      return res.status(400).json({ ok: false, error: "Invalid foodId." });
+    }
+
+    try {
+      const [rows] = await pool.query(
+        `SELECT image_url FROM food_products WHERE food_id = ?`,
+        [foodId]
+      );
+      const row = rows[0];
+      if (!row) {
+        return res.status(404).json({ ok: false, error: "Food not found." });
+      }
+
+      const imageUrl = row.image_url == null ? null : String(row.image_url);
+      if (imageUrl) {
+        const rel = imageUrl.startsWith("/uploads/") ? imageUrl.slice("/uploads/".length) : null;
+        if (rel) {
+          const filePath = path.join(uploadsRoot, rel);
+          try {
+            await unlink(filePath);
+          } catch {
+            /* file may already be missing */
+          }
+        }
+      }
+
+      await pool.query(
+        `UPDATE food_products SET image_url = NULL WHERE food_id = ?`,
+        [foodId]
+      );
+
+      return res.json({ ok: true, imageUrl: null });
+    } catch (err) {
+      console.error("DELETE /api/foods/:foodId/image error:", err);
       return res.status(500).json({ ok: false, error: "Server error." });
     }
   });
@@ -722,6 +885,62 @@ async function start() {
     }
   });
 
+  // Discover the most recent booth session that has not had a survey submitted yet.
+  // Used by Consent.tsx when familis.currentSession was cleared by logout.
+  app.get("/api/sessions/booth/active", async (_req, res) => {
+    try {
+      const [rows] = await pool.query(
+        `
+        SELECT
+          s.session_id,
+          s.user_id,
+          s.participant_id,
+          s.food_id,
+          s.status,
+          s.start_time,
+          fp.name AS food_name,
+          fp.category AS food_category,
+          fp.image_url AS food_image_url
+        FROM sessions s
+        LEFT JOIN food_products fp ON fp.food_id = s.food_id
+        LEFT JOIN survey_results sr ON sr.session_id = s.session_id
+        WHERE s.status IN ('active', 'completed')
+          AND sr.session_id IS NULL
+        ORDER BY s.start_time DESC
+        LIMIT 1
+      `
+      );
+
+      if (rows.length === 0) {
+        return res.json({ ok: true, session: null, food: null });
+      }
+
+      const r = rows[0];
+      return res.json({
+        ok: true,
+        session: {
+          id: Number(r.session_id),
+          userId: Number(r.user_id),
+          participantId: r.participant_id == null ? null : Number(r.participant_id),
+          foodId: Number(r.food_id),
+          status: r.status,
+          startTime: toIsoOrNull(r.start_time),
+        },
+        food: r.food_name
+          ? {
+              id: Number(r.food_id),
+              name: String(r.food_name),
+              category: String(r.food_category ?? ""),
+              imageUrl: r.food_image_url == null ? null : String(r.food_image_url),
+            }
+          : null,
+      });
+    } catch (err) {
+      console.error("GET /api/sessions/booth/active error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
   // Get a session + its food (used by Camera Session UI)
   app.get("/api/sessions/:sessionId", async (req, res) => {
     const sessionId = Number.parseInt(req.params.sessionId, 10);
@@ -742,7 +961,8 @@ async function start() {
           s.end_time,
           fp.name AS food_name,
           fp.category AS food_category,
-          fp.image_url AS food_image_url
+          fp.image_url AS food_image_url,
+          EXISTS(SELECT 1 FROM survey_results sr WHERE sr.session_id = s.session_id) AS has_survey
         FROM sessions s
         LEFT JOIN food_products fp ON fp.food_id = s.food_id
         WHERE s.session_id = ?
@@ -767,6 +987,7 @@ async function start() {
           status: r.status,
           startTime: toIsoOrNull(r.start_time),
           endTime: toIsoOrNull(r.end_time),
+          hasSurvey: Boolean(r.has_survey),
         },
         food: r.food_name
           ? {
@@ -818,9 +1039,15 @@ async function start() {
       }
 
       try {
-        const [[sess]] = await pool.query(`SELECT status FROM sessions WHERE session_id = ? LIMIT 1`, [sessionId]);
+        const [[sess]] = await pool.query(
+          `SELECT status, invalidated_at FROM sessions WHERE session_id = ? LIMIT 1`,
+          [sessionId]
+        );
         if (!sess) {
           return res.status(404).json({ ok: false, error: "Session not found." });
+        }
+        if (sess.invalidated_at != null) {
+          return res.status(409).json({ ok: false, error: "Session is invalidated; frame capture is disabled." });
         }
         if (sess.status !== "active") {
           return res.status(409).json({ ok: false, error: "Session is not active; cannot record frames." });
@@ -909,6 +1136,8 @@ async function start() {
           s.participant_id,
           s.food_id,
           s.status,
+          s.invalidated_at,
+          s.retention_status,
           s.start_time,
           s.end_time,
           fp.name AS food_name,
@@ -994,6 +1223,8 @@ async function start() {
           participantId: sessionRow.participant_id == null ? null : Number(sessionRow.participant_id),
           foodId: Number(sessionRow.food_id),
           status: sessionRow.status,
+          invalidatedAt: toIsoOrNull(sessionRow.invalidated_at),
+          retentionStatus: sessionRow.retention_status ?? "active",
           startTime: toIsoOrNull(sessionRow.start_time),
           endTime: toIsoOrNull(sessionRow.end_time),
         },
@@ -1162,6 +1393,53 @@ async function start() {
       });
     } catch (err) {
       console.error("PATCH /api/sessions/:sessionId/status error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
+  // Flag a session for deletion without removing data yet (Phase 4 retention job
+  // performs the actual cleanup). Distinct from DELETE, which is immediate.
+  app.post("/api/sessions/:sessionId/invalidate", requireRole("admin"), async (req, res) => {
+    const sessionId = Number.parseInt(req.params.sessionId, 10);
+    if (!Number.isFinite(sessionId)) {
+      return res.status(400).json({ ok: false, error: "Invalid sessionId." });
+    }
+
+    try {
+      const [result] = await pool.query(
+        `
+        UPDATE sessions
+        SET invalidated_at = COALESCE(invalidated_at, NOW()),
+            retention_status = 'pending_deletion'
+        WHERE session_id = ?
+      `,
+        [sessionId]
+      );
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ ok: false, error: "Session not found." });
+      }
+
+      const [[row]] = await pool.query(
+        `
+        SELECT session_id, status, invalidated_at, retention_status
+        FROM sessions
+        WHERE session_id = ?
+        LIMIT 1
+      `,
+        [sessionId]
+      );
+
+      return res.json({
+        ok: true,
+        session: {
+          id: Number(row.session_id),
+          status: row.status,
+          invalidatedAt: toIsoOrNull(row.invalidated_at),
+          retentionStatus: row.retention_status,
+        },
+      });
+    } catch (err) {
+      console.error("POST /api/sessions/:sessionId/invalidate error:", err);
       return res.status(500).json({ ok: false, error: "Server error." });
     }
   });

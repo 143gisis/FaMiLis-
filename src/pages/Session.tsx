@@ -1,12 +1,106 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { PageHeader, PageTitle } from "../components/PageHeader";
+import { apiFetch } from "../lib/api";
 import { confidenceToTier, confidenceTooltip } from "../lib/confidence";
 import { hedonicLabel } from "../lib/ratingLabels";
 
-const API_BASE = "http://localhost:5000";
 const FRAME_CAPTURE_MS = 750;
+const NO_FACE_PAUSE_MS = 8000;
+const INFERENCE_FAILURE_PAUSE_COUNT = 5;
 const USE_DB = true;
+
+type PauseReason =
+  | "initial"
+  | "manual"
+  | "tab-hidden"
+  | "window-blur"
+  | "camera-error"
+  | "camera-ended"
+  | "emotion-offline"
+  | "offline"
+  | "no-face"
+  | "confirm-stop";
+
+type StoredPauseState = {
+  isPaused: boolean;
+  pauseReason: PauseReason | null;
+  totalPausedMs: number;
+  pauseStartMs: number | null;
+  hasEverResumed: boolean;
+};
+
+const PAUSE_MESSAGES: Record<PauseReason, string> = {
+  initial: "Ready — press Resume to begin recording. No frames are being captured yet.",
+  manual: "Data collection paused — no frames are being captured.",
+  "tab-hidden": "Tab was hidden — recording paused. Resume when ready.",
+  "window-blur": "Window lost focus — recording paused. Resume when ready.",
+  "camera-error": "Camera unavailable — recording paused. Resume after fixing camera access.",
+  "camera-ended": "Camera stream ended — refresh or re-enable the camera, then resume.",
+  "emotion-offline": "Emotion service offline — recording paused. Start the service, then resume.",
+  offline: "Network offline — recording paused. Reconnect, then resume.",
+  "no-face": "Face not visible — recording paused. Position yourself in frame, then resume.",
+  "confirm-stop": "Confirm stop dialog open — recording paused.",
+};
+
+function pauseStorageKey(sessionId: number) {
+  return `familis.sessionPause.${sessionId}`;
+}
+
+function readStoredPauseState(sessionId: number): StoredPauseState | null {
+  try {
+    const raw = sessionStorage.getItem(pauseStorageKey(sessionId));
+    if (!raw) return null;
+    return JSON.parse(raw) as StoredPauseState;
+  } catch {
+    return null;
+  }
+}
+
+function computeInitialPause(sessionId: number | null) {
+  if (sessionId == null) {
+    return {
+      isPaused: true,
+      pauseReason: "initial" as PauseReason,
+      totalPausedMs: 0,
+      hasEverResumed: false,
+      pauseStartMs: Date.now(),
+    };
+  }
+
+  const stored = readStoredPauseState(sessionId);
+  if (!stored) {
+    return {
+      isPaused: true,
+      pauseReason: "initial" as PauseReason,
+      totalPausedMs: 0,
+      hasEverResumed: false,
+      pauseStartMs: Date.now(),
+    };
+  }
+
+  if (stored.isPaused) {
+    let totalPausedMs = stored.totalPausedMs ?? 0;
+    if (stored.pauseStartMs != null) {
+      totalPausedMs += Date.now() - stored.pauseStartMs;
+    }
+    return {
+      isPaused: true,
+      pauseReason: stored.pauseReason ?? ("manual" as PauseReason),
+      totalPausedMs,
+      hasEverResumed: stored.hasEverResumed ?? false,
+      pauseStartMs: Date.now(),
+    };
+  }
+
+  return {
+    isPaused: false,
+    pauseReason: null,
+    totalPausedMs: stored.totalPausedMs ?? 0,
+    hasEverResumed: stored.hasEverResumed ?? true,
+    pauseStartMs: null,
+  };
+}
 
 type Food = {
   id: number;
@@ -85,6 +179,8 @@ export default function Session() {
 
   const initialSessionId = initialSession?.id ?? storedCurrent?.id ?? null;
   const sessionId = initialSessionId;
+  const initialPause = useMemo(() => computeInitialPause(initialSessionId), [initialSessionId]);
+
   const [session, setSession] = useState<SessionRow | null>(initialSession ?? null);
   const [food, setFood] = useState<Food | null>(initialFood ?? null);
 
@@ -96,9 +192,15 @@ export default function Session() {
   const streamRef = useRef<MediaStream | null>(null);
 
   const [isRecording, setIsRecording] = useState((initialSession?.status ?? "active") === "active");
-  const [isPaused, setIsPaused] = useState(false);
-  const pauseStartRef = useRef<number | null>(null);
-  const totalPausedMsRef = useRef(0);
+  const [isPaused, setIsPaused] = useState(initialPause.isPaused);
+  const [pauseReason, setPauseReason] = useState<PauseReason | null>(initialPause.pauseReason);
+  const [hasEverResumed, setHasEverResumed] = useState(initialPause.hasEverResumed);
+  const pauseStartRef = useRef<number | null>(initialPause.pauseStartMs);
+  const totalPausedMsRef = useRef(initialPause.totalPausedMs);
+
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [stopPending, setStopPending] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
 
   const [emotionServiceOk, setEmotionServiceOk] = useState<boolean | null>(null);
   const [framesCaptured, setFramesCaptured] = useState(0);
@@ -109,6 +211,23 @@ export default function Session() {
 
   const frameInFlightRef = useRef(false);
   const cameraSessionActiveRef = useRef(true);
+  const isRecordingRef = useRef(isRecording);
+  const isPausedRef = useRef(isPaused);
+  const hasEverResumedRef = useRef(hasEverResumed);
+  const consecutiveNoFaceRef = useRef(0);
+  const consecutiveInferenceFailuresRef = useRef(0);
+
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
+
+  useEffect(() => {
+    isPausedRef.current = isPaused;
+  }, [isPaused]);
+
+  useEffect(() => {
+    hasEverResumedRef.current = hasEverResumed;
+  }, [hasEverResumed]);
 
   const startEpochMs = useMemo(() => {
     if (!session?.startTime) return null;
@@ -136,6 +255,60 @@ export default function Session() {
     return () => window.clearInterval(id);
   }, [startEpochMs, isPaused]);
 
+  const persistPauseState = useCallback(() => {
+    if (sessionId == null) return;
+    const state: StoredPauseState = {
+      isPaused: isPausedRef.current,
+      pauseReason,
+      totalPausedMs: totalPausedMsRef.current,
+      pauseStartMs: pauseStartRef.current,
+      hasEverResumed: hasEverResumedRef.current,
+    };
+    sessionStorage.setItem(pauseStorageKey(sessionId), JSON.stringify(state));
+  }, [sessionId, pauseReason]);
+
+  const pauseRecording = useCallback((reason: PauseReason) => {
+    if (!isRecordingRef.current) return;
+    if (!isPausedRef.current) {
+      pauseStartRef.current = Date.now();
+      setIsPaused(true);
+    }
+    setPauseReason(reason);
+  }, []);
+
+  const resumeBlocked =
+    Boolean(cameraError) ||
+    (typeof navigator !== "undefined" && !navigator.onLine) ||
+    emotionServiceOk === false;
+
+  const resumeBlockedTooltip = cameraError
+    ? "Fix camera access before resuming."
+    : typeof navigator !== "undefined" && !navigator.onLine
+      ? "Reconnect to the network before resuming."
+      : emotionServiceOk === false
+        ? "Start the emotion service before resuming."
+        : null;
+
+  const resumeRecording = useCallback(() => {
+    if (!isRecordingRef.current || resumeBlocked) return;
+    if (!isPausedRef.current) return;
+
+    if (pauseStartRef.current != null) {
+      totalPausedMsRef.current += Date.now() - pauseStartRef.current;
+      pauseStartRef.current = null;
+    }
+    consecutiveNoFaceRef.current = 0;
+    consecutiveInferenceFailuresRef.current = 0;
+    setIsPaused(false);
+    setPauseReason(null);
+    hasEverResumedRef.current = true;
+    setHasEverResumed(true);
+  }, [resumeBlocked]);
+
+  useEffect(() => {
+    persistPauseState();
+  }, [isPaused, pauseReason, hasEverResumed, persistPauseState]);
+
   const stopCamera = () => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
@@ -161,15 +334,24 @@ export default function Session() {
         return;
       }
       streamRef.current = stream;
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.onended = () => {
+          if (!cameraSessionActiveRef.current) return;
+          setCameraError("Camera stream ended. Refresh or re-enable the camera.");
+          pauseRecording("camera-ended");
+        };
+      }
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play().catch(() => {});
       }
     } catch (err: any) {
       if (!cameraSessionActiveRef.current) return;
-      setCameraError(
-        err?.message || "Camera permission denied or not available. Please allow access and try again."
-      );
+      const message =
+        err?.message || "Camera permission denied or not available. Please allow access and try again.";
+      setCameraError(message);
+      pauseRecording("camera-error");
     }
   };
 
@@ -181,15 +363,12 @@ export default function Session() {
 
     async function loadSession() {
       try {
-        const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`);
+        const res = await apiFetch(`/api/sessions/${sessionId}`);
         const json = await res.json();
         if (!res.ok || !json?.ok) throw new Error(json?.error || "Failed to load session.");
         setSession(json.session as SessionRow);
         setFood((prev) => prev ?? (json.food as Food | null));
         setIsRecording((json.session?.status ?? "active") === "active");
-        setIsPaused(false);
-        pauseStartRef.current = null;
-        totalPausedMsRef.current = 0;
       } catch (err: any) {
         setLoadError(err?.message || "Failed to load session.");
       } finally {
@@ -203,7 +382,7 @@ export default function Session() {
   useEffect(() => {
     async function checkEmotion() {
       try {
-        const res = await fetch(`${API_BASE}/api/emotion/health`);
+        const res = await apiFetch(`/api/emotion/health`);
         const json = await res.json();
         const loaded = Boolean(json?.emotion?.modelLoaded);
         setEmotionServiceOk(Boolean(json?.ok && loaded));
@@ -260,34 +439,48 @@ export default function Session() {
       const fd = new FormData();
       fd.append("frame", blob, "frame.jpg");
 
-      const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/frames`, {
+      const res = await apiFetch(`/api/sessions/${sessionId}/frames`, {
         method: "POST",
         body: fd,
       });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) {
         setLastInferenceError(json?.error || `Frame upload failed (${res.status})`);
+        consecutiveInferenceFailuresRef.current += 1;
+        if (consecutiveInferenceFailuresRef.current >= INFERENCE_FAILURE_PAUSE_COUNT) {
+          pauseRecording("emotion-offline");
+        }
         return;
       }
 
+      consecutiveInferenceFailuresRef.current = 0;
       setFramesCaptured((c) => c + 1);
       setLastInferenceError(json.inferenceError || null);
 
       if (json.faceDetected === true && json.hedonicScore != null && json.confidenceScore != null) {
+        consecutiveNoFaceRef.current = 0;
         setLiveHedonic01(Number(json.hedonicScore));
         setLiveConfidence01(Number(json.confidenceScore));
         setLiveSentiment(typeof json.sentiment === "string" ? json.sentiment : null);
       } else if (json.faceDetected === false) {
+        consecutiveNoFaceRef.current += 1;
         setLiveHedonic01(null);
         setLiveConfidence01(null);
         setLiveSentiment(null);
+        if (consecutiveNoFaceRef.current * FRAME_CAPTURE_MS >= NO_FACE_PAUSE_MS) {
+          pauseRecording("no-face");
+        }
       }
     } catch (e: any) {
       setLastInferenceError(e?.message || "Frame capture failed.");
+      consecutiveInferenceFailuresRef.current += 1;
+      if (consecutiveInferenceFailuresRef.current >= INFERENCE_FAILURE_PAUSE_COUNT) {
+        pauseRecording("emotion-offline");
+      }
     } finally {
       frameInFlightRef.current = false;
     }
-  }, [sessionId]);
+  }, [sessionId, pauseRecording]);
 
   useEffect(() => {
     if (!sessionId || !isRecording || isPaused || cameraError) return;
@@ -297,22 +490,73 @@ export default function Session() {
 
   const togglePause = () => {
     if (!isRecording) return;
-    setIsPaused((p) => {
-      if (p) {
-        if (pauseStartRef.current != null) {
-          totalPausedMsRef.current += Date.now() - pauseStartRef.current;
-          pauseStartRef.current = null;
-        }
-        return false;
-      }
-      pauseStartRef.current = Date.now();
-      return true;
-    });
+    if (isPaused) {
+      resumeRecording();
+    } else {
+      pauseRecording("manual");
+    }
   };
 
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [stopPending, setStopPending] = useState(false);
-  const [stopError, setStopError] = useState<string | null>(null);
+  useEffect(() => {
+    if (cameraError && isRecording) {
+      pauseRecording("camera-error");
+    }
+  }, [cameraError, isRecording, pauseRecording]);
+
+  useEffect(() => {
+    if (emotionServiceOk === false && isRecording) {
+      pauseRecording("emotion-offline");
+    }
+  }, [emotionServiceOk, isRecording, pauseRecording]);
+
+  useEffect(() => {
+    if (confirmOpen && isRecording) {
+      pauseRecording("confirm-stop");
+    }
+  }, [confirmOpen, isRecording, pauseRecording]);
+
+  useEffect(() => {
+    if (!confirmOpen && isPaused && pauseReason === "confirm-stop") {
+      setPauseReason("manual");
+    }
+  }, [confirmOpen, isPaused, pauseReason]);
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.hidden && isRecordingRef.current) {
+        pauseRecording("tab-hidden");
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [pauseRecording]);
+
+  useEffect(() => {
+    const onWindowBlur = () => {
+      if (document.hidden) return;
+      if (isRecordingRef.current) {
+        pauseRecording("window-blur");
+      }
+    };
+    window.addEventListener("blur", onWindowBlur);
+    return () => window.removeEventListener("blur", onWindowBlur);
+  }, [pauseRecording]);
+
+  useEffect(() => {
+    const onOffline = () => {
+      if (isRecordingRef.current) {
+        pauseRecording("offline");
+      }
+    };
+    window.addEventListener("offline", onOffline);
+    return () => window.removeEventListener("offline", onOffline);
+  }, [pauseRecording]);
+
+  useEffect(() => {
+    if (typeof navigator !== "undefined" && !navigator.onLine && isRecording) {
+      pauseRecording("offline");
+    }
+  }, [isRecording, pauseRecording]);
 
   const handleStopClick = () => {
     if (!sessionId) return;
@@ -329,9 +573,13 @@ export default function Session() {
       stopCamera();
       setIsRecording(false);
       setIsPaused(false);
+      setPauseReason(null);
       pauseStartRef.current = null;
+      if (sessionId != null) {
+        sessionStorage.removeItem(pauseStorageKey(sessionId));
+      }
 
-      const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/stop`, { method: "POST" });
+      const res = await apiFetch(`/api/sessions/${sessionId}/stop`, { method: "POST" });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) {
         throw new Error(json?.error || "Unable to stop the session in the database.");
@@ -358,6 +606,11 @@ export default function Session() {
   const hedonicLabelText =
     hedonicDisplay == null ? null : hedonicLabel(hedonicDisplay);
 
+  const pauseBannerMessage =
+    pauseReason != null
+      ? PAUSE_MESSAGES[pauseReason]
+      : "Data collection paused — no frames are being captured.";
+
   return (
     <div className="min-h-screen bg-[#f6f7fb]" style={{ fontFamily: "'Montserrat', sans-serif" }}>
       <PageHeader onLogoClick={handleBackToDashboard} />
@@ -374,13 +627,17 @@ export default function Session() {
           {isRecording && isPaused && (
             <div className="mb-4 flex items-center gap-3 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3">
               <span className="w-2.5 h-2.5 rounded-full bg-amber-500 flex-shrink-0" aria-hidden="true" />
-              <p className="text-sm font-semibold text-amber-800">
-                Data collection paused — no frames are being captured.
-              </p>
+              <p className="text-sm font-semibold text-amber-800">{pauseBannerMessage}</p>
               <button
                 type="button"
                 onClick={togglePause}
-                className="ml-auto text-xs font-semibold text-amber-700 underline underline-offset-2 hover:text-amber-900"
+                disabled={resumeBlocked}
+                title={resumeBlocked ? resumeBlockedTooltip ?? undefined : undefined}
+                className={`ml-auto text-xs font-semibold underline underline-offset-2 ${
+                  resumeBlocked
+                    ? "text-amber-400 cursor-not-allowed no-underline"
+                    : "text-amber-700 hover:text-amber-900"
+                }`}
               >
                 Resume
               </button>
@@ -580,14 +837,21 @@ export default function Session() {
                   <button
                     type="button"
                     onClick={togglePause}
-                    disabled={!isRecording || stopPending}
+                    disabled={!isRecording || stopPending || (isPaused && resumeBlocked)}
+                    title={isPaused && resumeBlocked ? resumeBlockedTooltip ?? undefined : undefined}
                     className={`w-full py-3 rounded-lg text-sm font-semibold transition-colors ${
-                      isRecording
-                        ? "bg-amber-500 hover:bg-amber-600 text-white"
-                        : "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      !isRecording || stopPending || (isPaused && resumeBlocked)
+                        ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                        : isPaused
+                          ? "bg-green-600 hover:bg-green-700 text-white"
+                          : "bg-amber-500 hover:bg-amber-600 text-white"
                     }`}
                   >
-                    {isPaused ? "Resume recording" : "Pause recording"}
+                    {isPaused
+                      ? hasEverResumed
+                        ? "Resume recording"
+                        : "Start recording"
+                      : "Pause recording"}
                   </button>
                   <button
                     type="button"

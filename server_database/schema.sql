@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
   username VARCHAR(50) NOT NULL,
   email VARCHAR(255) NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  role ENUM('staff', 'admin') NOT NULL DEFAULT 'staff',
+  role ENUM('staff', 'admin', 'tester') NOT NULL DEFAULT 'staff',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   last_login TIMESTAMP NULL
 );
@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   start_time TIMESTAMP NULL,
   end_time TIMESTAMP NULL,
   status ENUM('pending', 'active', 'completed', 'cancelled') NOT NULL DEFAULT 'pending',
+  invalidated_at TIMESTAMP NULL,
+  retention_status ENUM('active', 'pending_deletion', 'anonymized') NOT NULL DEFAULT 'active',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
   INDEX idx_session_user (user_id),
@@ -113,6 +115,24 @@ CREATE TABLE IF NOT EXISTS survey_results (
   CONSTRAINT chk_salt CHECK (salt_sweet_rating BETWEEN 1 AND 9),
   CONSTRAINT chk_texture CHECK (texture_rating BETWEEN 1 AND 9),
   CONSTRAINT chk_final CHECK (final_overall_rating BETWEEN 1 AND 9)
+);
+
+-- CONSENT RECORDS (audit trail for facial-recording consent)
+CREATE TABLE IF NOT EXISTS consent (
+  consent_id INT AUTO_INCREMENT PRIMARY KEY,
+  session_id INT NULL,
+  participant_id INT NULL,
+  device_id VARCHAR(36) NOT NULL,
+  facial_recording BOOLEAN NOT NULL DEFAULT FALSE,
+  consent_version VARCHAR(10) NOT NULL DEFAULT '1.0',
+  agreed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  ip_address VARCHAR(45) NULL,
+
+  INDEX idx_consent_session (session_id),
+  INDEX idx_consent_participant (participant_id),
+
+  CONSTRAINT fk_consent_session FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE SET NULL,
+  CONSTRAINT fk_consent_participant FOREIGN KEY (participant_id) REFERENCES participants(participant_id) ON DELETE SET NULL
 );
 
 -- =====================================================

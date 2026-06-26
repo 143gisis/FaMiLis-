@@ -49,7 +49,56 @@ def _load_models() -> None:
         _MODEL_ERR = str(e)
         return
 
+    import json
+    import sys
+    import time
+    import urllib.request
+
     import mediapipe as mp
+
+    # #region agent log
+    try:
+        urllib.request.urlopen(
+            urllib.request.Request(
+                "http://127.0.0.1:7649/ingest/f3996eb4-6f4d-4d6f-821f-a25a2d9c1209",
+                data=json.dumps(
+                    {
+                        "sessionId": "33cced",
+                        "runId": "pre-fix",
+                        "hypothesisId": "A",
+                        "location": "emotion_service.py:_load_models",
+                        "message": "mediapipe import context",
+                        "data": {
+                            "pythonExecutable": sys.executable,
+                            "mediapipeVersion": getattr(mp, "__version__", "unknown"),
+                            "mediapipeFile": getattr(mp, "__file__", None),
+                            "hasSolutions": hasattr(mp, "solutions"),
+                        },
+                        "timestamp": int(time.time() * 1000),
+                    }
+                ).encode(),
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Debug-Session-Id": "33cced",
+                },
+                method="POST",
+            ),
+            timeout=2,
+        )
+    except Exception:
+        pass
+    # #endregion
+
+    if not hasattr(mp, "solutions"):
+        mp_version = getattr(mp, "__version__", "unknown")
+        _MODEL_ERR = (
+            f"Incompatible mediapipe {mp_version} at {getattr(mp, '__file__', '?')} "
+            f"(Python: {sys.executable}). "
+            "emotion_service requires mediapipe==0.10.14 with mp.solutions.face_mesh. "
+            "Run with the project venv: ..\\.venv\\Scripts\\python.exe emotion_service.py "
+            "or npm run emotion-service after installing backend/requirements.txt in .venv."
+        )
+        return
 
     mp_face_mesh = mp.solutions.face_mesh
     FACE_MESH = mp_face_mesh.FaceMesh(

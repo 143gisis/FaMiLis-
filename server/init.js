@@ -27,6 +27,37 @@ function createPool() {
   });
 }
 
+async function columnExists(pool, table, column) {
+  const [rows] = await pool.query(
+    `
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?
+    LIMIT 1
+  `,
+    [table, column]
+  );
+  return rows.length > 0;
+}
+
+// Idempotent upgrades for databases created before Phase 1 (schema.sql only
+// applies to fresh tables via CREATE TABLE IF NOT EXISTS).
+async function applyMigrations(pool) {
+  // users.role: add 'tester' (MODIFY is safe to re-run).
+  await pool.query(
+    `ALTER TABLE users MODIFY role ENUM('staff', 'admin', 'tester') NOT NULL DEFAULT 'staff'`
+  );
+
+  if (!(await columnExists(pool, "sessions", "invalidated_at"))) {
+    await pool.query(`ALTER TABLE sessions ADD COLUMN invalidated_at TIMESTAMP NULL`);
+  }
+  if (!(await columnExists(pool, "sessions", "retention_status"))) {
+    await pool.query(
+      `ALTER TABLE sessions ADD COLUMN retention_status ENUM('active', 'pending_deletion', 'anonymized') NOT NULL DEFAULT 'active'`
+    );
+  }
+}
+
 export async function initDb() {
   const pool = createPool();
 
@@ -34,6 +65,8 @@ export async function initDb() {
   const schemaPath = path.resolve(__dirname, "../server_database/schema.sql");
   const schemaSql = await readFile(schemaPath, "utf8");
   await pool.query(schemaSql);
+
+  await applyMigrations(pool);
 
   // Seed admin user (plaintext demo password hashed with bcrypt; salt is inside the hash)
   const adminPasswordHash = await bcrypt.hash("admin123", 10);
@@ -46,6 +79,20 @@ export async function initDb() {
       password_hash = VALUES(password_hash);
   `,
     ["admin", "admin@familis.com", adminPasswordHash, "admin"]
+  );
+
+  // Seed a locked-down tester account for the consent -> session -> survey flow.
+  const testerPasswordHash = await bcrypt.hash("tester123", 10);
+  await pool.query(
+    `
+    INSERT INTO users (username, email, password_hash, role)
+    VALUES (?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      username = VALUES(username),
+      password_hash = VALUES(password_hash),
+      role = VALUES(role);
+  `,
+    ["tester", "tester@familis.com", testerPasswordHash, "tester"]
   );
 
   /**

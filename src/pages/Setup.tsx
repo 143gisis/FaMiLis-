@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { PageHeader, PageTitle } from "../components/PageHeader";
+import { apiFetch, setToken } from "../lib/api";
+import { getStoredRole, isAdminRole } from "../RequireAuth";
 
 type Food = {
   id: number;
@@ -13,8 +15,6 @@ type Participant = {
   age: number | null;
   gender: string | null;
 };
-
-const API_BASE = "http://localhost:5000";
 
 function getStoredUserId(): number {
   try {
@@ -65,6 +65,9 @@ const DEFAULT_CONSENT: ConsentState = {
 
 export default function Setup() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const preselectedFoodId = (location.state as { foodId?: number } | null)?.foodId;
+  const foodPreselectAppliedRef = useRef(false);
   const [foods, setFoods] = useState<Food[]>([]);
   const [foodsLoading, setFoodsLoading] = useState(true);
   const [foodsError, setFoodsError] = useState<string | null>(null);
@@ -82,6 +85,13 @@ export default function Setup() {
   const [startError, setStartError] = useState<string | null>(null);
   const [sessionStarted, setSessionStarted] = useState(false);
 
+  const [handoffEmail, setHandoffEmail] = useState("");
+  const [handoffPassword, setHandoffPassword] = useState("");
+  const [handoffError, setHandoffError] = useState<string | null>(null);
+  const [handoffing, setHandoffing] = useState(false);
+
+  const isAdmin = isAdminRole(getStoredRole());
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -90,7 +100,7 @@ export default function Setup() {
       setFoodsLoading(true);
       setFoodsError(null);
       try {
-        const res = await fetch(`${API_BASE}/api/foods`);
+        const res = await apiFetch(`/api/foods`);
         const json = await res.json();
         if (!res.ok || !json?.ok) throw new Error(json?.error || "Failed to load foods.");
         const list = (json.foods ?? []) as any[];
@@ -111,9 +121,22 @@ export default function Setup() {
   }, []);
 
   useEffect(() => {
+    if (foodsLoading || foods.length === 0) return;
+    if (foodPreselectAppliedRef.current) return;
+    if (preselectedFoodId == null || !Number.isFinite(preselectedFoodId)) return;
+    const exists = foods.some((f) => f.id === preselectedFoodId);
+    if (!exists) return;
+    setSelectedFoodId((current) => {
+      if (current !== "") return current;
+      foodPreselectAppliedRef.current = true;
+      return preselectedFoodId;
+    });
+  }, [foodsLoading, foods, preselectedFoodId]);
+
+  useEffect(() => {
     async function loadParticipants() {
       try {
-        const res = await fetch(`${API_BASE}/api/participants`);
+        const res = await apiFetch(`/api/participants`);
         const json = await res.json().catch(() => null);
         if (!res.ok || !json?.ok) return;
         const list = (json.participants ?? []) as any[];
@@ -208,13 +231,15 @@ export default function Setup() {
     !foodsLoading &&
     !starting;
 
+  const canHandoff = canStart && !!handoffEmail.trim() && !!handoffPassword && !handoffing;
+
   const handleStart = async () => {
     if (!canStart) return;
     setStartError(null);
     setParticipantError(null);
     setStarting(true);
     try {
-      const participantRes = await fetch(`${API_BASE}/api/participants`, {
+      const participantRes = await apiFetch(`/api/participants`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -229,7 +254,7 @@ export default function Setup() {
       }
       const createdParticipantId = Number(participantJson.participant.id);
 
-      const res = await fetch(`${API_BASE}/api/sessions/start`, {
+      const res = await apiFetch(`/api/sessions/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -278,6 +303,79 @@ export default function Setup() {
     }
   };
 
+  const handleHandoff = async () => {
+    if (!canHandoff) return;
+    setHandoffError(null);
+    setParticipantError(null);
+    setHandoffing(true);
+    try {
+      // Validate tester credentials first — before touching anything — so a typo
+      // does not leave the admin logged out with a half-started session.
+      const loginRes = await fetch("http://localhost:5000/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: handoffEmail.trim(), password: handoffPassword }),
+      });
+      const loginJson = await loginRes.json().catch(() => null);
+      if (!loginRes.ok || !loginJson?.ok) {
+        setHandoffError(loginJson?.error || "Wrong participant credentials.");
+        return;
+      }
+
+      // Credentials are valid — now start the session.
+      const participantRes = await apiFetch(`/api/participants`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          testerLabel: participantLabel.trim(),
+          age: participantAge.trim() === "" ? null : Number(participantAge),
+          gender: participantGender || null,
+        }),
+      });
+      const participantJson = await participantRes.json().catch(() => null);
+      if (!participantRes.ok || !participantJson?.ok || !participantJson?.participant?.id) {
+        setHandoffError(participantJson?.error || "Failed to register participant.");
+        return;
+      }
+
+      const sessRes = await apiFetch(`/api/sessions/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: getStoredUserId(),
+          foodId: selectedFoodId as number,
+          participantId: Number(participantJson.participant.id),
+        }),
+      });
+      const sessJson = await sessRes.json().catch(() => null);
+      if (!sessRes.ok || !sessJson?.ok) {
+        setHandoffError(sessJson?.error || "Failed to start session.");
+        return;
+      }
+
+      const started = sessJson.session as {
+        id: number; userId: number; participantId: number | null;
+        foodId: number; status: string; startTime: string;
+      };
+      localStorage.setItem("familis.currentSession", JSON.stringify({
+        id: started.id, userId: started.userId,
+        participantId: started.participantId, foodId: started.foodId,
+        status: started.status, startTime: started.startTime,
+      }));
+
+      // Swap auth: clear admin user/token, store tester credentials.
+      try { localStorage.removeItem("familis.user"); } catch { /* ignore */ }
+      try { localStorage.setItem("familis.user", JSON.stringify(loginJson.user)); } catch { /* ignore */ }
+      setToken(loginJson.token);
+
+      navigate("/consent");
+    } catch (err: any) {
+      setHandoffError(err?.message || "Handoff failed.");
+    } finally {
+      setHandoffing(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#f6f7fb]" style={{ fontFamily: "'Montserrat', sans-serif" }}>
       <PageHeader />
@@ -290,7 +388,7 @@ export default function Setup() {
       )}
 
       <main className="px-6 py-8">
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           <PageTitle title="Camera Setup" subtitle="Configure your food testing session" />
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -411,6 +509,54 @@ export default function Setup() {
 
             {/* Right column */}
             <div className="space-y-5">
+              {/* Booth handoff — admin/staff only */}
+              {isAdmin && (
+                <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                  <p className="text-sm text-gray-700 font-semibold mb-0.5">Booth Handoff</p>
+                  <p className="text-[11px] text-gray-500 mb-3">
+                    Enter participant login to start the session and switch accounts automatically.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <input
+                      type="email"
+                      value={handoffEmail}
+                      onChange={(e) => setHandoffEmail(e.target.value)}
+                      placeholder="tester@familis.com"
+                      autoComplete="off"
+                      className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white"
+                    />
+                    <input
+                      type="password"
+                      value={handoffPassword}
+                      onChange={(e) => setHandoffPassword(e.target.value)}
+                      placeholder="Participant password"
+                      autoComplete="new-password"
+                      className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleHandoff}
+                    disabled={!canHandoff}
+                    className={`mt-3 w-full py-2.5 rounded-lg text-sm font-bold transition-colors ${
+                      canHandoff
+                        ? "bg-gray-800 hover:bg-gray-900 text-white shadow-sm"
+                        : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                    }`}
+                  >
+                    {handoffing ? "Starting…" : "Start Session & Hand Off"}
+                  </button>
+                  {handoffError ? (
+                    <p className="text-xs text-red-600 mt-2">{handoffError}</p>
+                  ) : null}
+                  {!handoffEmail.trim() && !handoffPassword && (
+                    <p className="text-[11px] text-gray-400 mt-2">
+                      Leave blank to use the Start Session by the admins below.
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Camera preview */}
               <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                 <h3 className="text-sm text-gray-700 mb-3 font-semibold">Camera Preview</h3>

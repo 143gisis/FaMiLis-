@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { PageHeader } from "../components/PageHeader";
+import { SessionMultiSelect, type SessionOption } from "../components/dashboard";
+import {
+  ColoredRatingBar,
+  HeroHedonicCard,
+  InsightCard,
+  MetricCard,
+  ProfileCard,
+  SectionPill,
+  TabButton,
+} from "../components/analytics";
+import { API_BASE, apiFetch } from "../lib/api";
 import { hedonicColor } from "../lib/ratingLabels";
 import { ATTRIBUTE_COLORS } from "../lib/attributeColors";
 import { confidenceToTier } from "../lib/confidence";
@@ -16,7 +26,6 @@ import {
 } from "chart.js";
 import { Line } from "react-chartjs-2";
 
-const API_BASE = "http://localhost:5000";
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
 type TabKey = "frame" | "system" | "survey";
@@ -60,6 +69,8 @@ type SessionDetailPayload = {
     userId: number;
     foodId: number;
     status: SessionStatus;
+    invalidatedAt: string | null;
+    retentionStatus: "active" | "pending_deletion" | "anonymized";
     startTime: string | null;
     endTime: string | null;
   };
@@ -144,6 +155,47 @@ export default function SessionDetail() {
   const [statusSaving, setStatusSaving] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
+  const [invalidateOpen, setInvalidateOpen] = useState(false);
+  const [invalidatePending, setInvalidatePending] = useState(false);
+  const [siblingSessions, setSiblingSessions] = useState<SessionOption[]>([]);
+  const [siblingSessionsLoading, setSiblingSessionsLoading] = useState(false);
+  const [selectedSessionIds, setSelectedSessionIds] = useState<number[]>([]);
+
+  useEffect(() => {
+    if (sessionId == null) return;
+    setSelectedSessionIds([sessionId]);
+  }, [sessionId]);
+
+  useEffect(() => {
+    const foodId = data?.session.foodId;
+    if (foodId == null) {
+      setSiblingSessions([]);
+      return;
+    }
+
+    const ac = new AbortController();
+
+    async function loadSiblingSessions() {
+      setSiblingSessionsLoading(true);
+      try {
+        const res = await apiFetch(`/api/foods/${foodId}/sessions`, { signal: ac.signal });
+        const json = await res.json().catch(() => null);
+        if (!res.ok || !json?.ok) {
+          throw new Error(json?.error || "Failed to load sessions.");
+        }
+        const list = (json.sessions ?? []) as SessionOption[];
+        setSiblingSessions(list);
+      } catch (err: any) {
+        if (err?.name === "AbortError") return;
+        setSiblingSessions([]);
+      } finally {
+        setSiblingSessionsLoading(false);
+      }
+    }
+
+    void loadSiblingSessions();
+    return () => ac.abort();
+  }, [data?.session.foodId]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -159,7 +211,7 @@ export default function SessionDetail() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/details`, {
+        const res = await apiFetch(`/api/sessions/${sessionId}/details`, {
           signal: ac.signal,
         });
         const json = await res.json().catch(() => null);
@@ -248,7 +300,7 @@ export default function SessionDetail() {
     setStatusSaving(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/sessions/${content.session.id}/status`, {
+      const res = await apiFetch(`/api/sessions/${content.session.id}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: nextStatus }),
@@ -270,7 +322,7 @@ export default function SessionDetail() {
     setDeletePending(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/sessions/${content.session.id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/sessions/${content.session.id}`, { method: "DELETE" });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) {
         throw new Error(json?.error || "Failed to delete session.");
@@ -282,6 +334,37 @@ export default function SessionDetail() {
     } finally {
       setDeletePending(false);
       setDeleteOpen(false);
+    }
+  };
+
+  const onInvalidateSession = async () => {
+    if (!content) return;
+    setInvalidatePending(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/api/sessions/${content.session.id}/invalidate`, { method: "POST" });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok || !json?.session) {
+        throw new Error(json?.error || "Failed to invalidate session.");
+      }
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              session: {
+                ...prev.session,
+                status: json.session.status,
+                invalidatedAt: json.session.invalidatedAt,
+                retentionStatus: json.session.retentionStatus,
+              },
+            }
+          : prev
+      );
+    } catch (err: any) {
+      setError(err?.message || "Failed to invalidate session.");
+    } finally {
+      setInvalidatePending(false);
+      setInvalidateOpen(false);
     }
   };
 
@@ -327,6 +410,11 @@ export default function SessionDetail() {
                     >
                       {formatStatus(status)}
                     </span>
+                    {content.session.invalidatedAt ? (
+                      <span className="inline-flex items-center px-3 py-1 rounded-full text-[11px] font-semibold bg-red-100 text-red-700 border border-red-200">
+                        Invalidated
+                      </span>
+                    ) : null}
                   </div>
                   <p className="text-sm text-gray-600 mt-1">
                     {content.food ? `${content.food.name} - ${content.food.category}` : "Session"}
@@ -335,7 +423,15 @@ export default function SessionDetail() {
                     {formatDateTime(content.session.startTime)} - {formatDateTime(content.session.endTime)}
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <SessionMultiSelect
+                    sessions={siblingSessions}
+                    currentSessionId={content.session.id}
+                    selectedIds={selectedSessionIds}
+                    loading={siblingSessionsLoading}
+                    onSelectedIdsChange={setSelectedSessionIds}
+                    onNavigateToSession={(id) => navigate(`/session-detail?sessionId=${id}`)}
+                  />
                   <select
                     value={status}
                     onChange={(e) => onChangeStatus(e.target.value as SessionStatus)}
@@ -349,6 +445,14 @@ export default function SessionDetail() {
                       </option>
                     ))}
                   </select>
+                  <button
+                    type="button"
+                    onClick={() => setInvalidateOpen(true)}
+                    disabled={!!content.session.invalidatedAt || invalidatePending}
+                    className="text-sm border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-md px-3 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {content.session.invalidatedAt ? "Invalidated" : "Invalidate"}
+                  </button>
                   <button
                     type="button"
                     onClick={() => setDeleteOpen(true)}
@@ -601,117 +705,37 @@ export default function SessionDetail() {
           </div>
         </div>
       ) : null}
-    </div>
-  );
-}
 
-function MetricCard({
-  icon,
-  iconBg,
-  title,
-  value,
-}: {
-  icon: string;
-  iconBg: string;
-  title: string;
-  value: string;
-}) {
-  return (
-    <div className="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3 shadow-sm">
-      <span className={`text-2xl w-10 h-10 flex items-center justify-center rounded-lg flex-shrink-0 ${iconBg}`}>
-        {icon}
-      </span>
-      <div className="min-w-0">
-        <p className="text-xs text-gray-500 font-semibold">{title}</p>
-        <p className="text-2xl leading-none text-gray-900 font-bold mt-1">{value}</p>
-      </div>
-    </div>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${
-        active ? "bg-[#e8174a] text-white" : "bg-white text-gray-600 hover:bg-gray-50"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function ratingToOutOf9(rating1to9: number | null) {
-  if (rating1to9 == null) return 0;
-  return rating1to9;
-}
-
-function ColoredRatingBar({
-  label,
-  rating,
-  color,
-}: {
-  label: string;
-  rating: number | null;
-  color: string;
-}) {
-  const val = ratingToOutOf9(rating);
-  const pct = clampPct((val / 9) * 100);
-  return (
-    <div className="mb-3">
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-sm text-gray-700 font-medium flex items-center gap-1.5">
-          <span
-            className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0"
-            style={{ backgroundColor: color }}
-            aria-hidden="true"
-          />
-          {label}
-        </span>
-        <span className="text-sm text-gray-900 font-semibold tabular-nums">{Math.round(val)} / 9</span>
-      </div>
-      <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-        <div
-          className="h-full rounded-full transition-all duration-300"
-          style={{ width: `${pct}%`, backgroundColor: color }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function SectionPill({ children }: { children: ReactNode }) {
-  return (
-    <span className="inline-flex items-center px-3 py-1 rounded-full bg-[#e8174a] text-white text-xs font-bold uppercase tracking-wider mb-3">
-      {children}
-    </span>
-  );
-}
-
-function InsightCard({
-  title,
-  value,
-  sub,
-}: {
-  title: string;
-  value: string;
-  sub: string;
-}) {
-  return (
-    <div className="bg-gray-50 rounded-xl border border-gray-100 p-4 flex-1 min-w-0">
-      <p className="text-xs text-gray-500 font-semibold mb-1">{title}</p>
-      <p className="text-2xl font-extrabold text-gray-900 leading-none mb-1">{value}</p>
-      <p className="text-xs text-gray-500 leading-snug">{sub}</p>
+      {invalidateOpen && content ? (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4 border border-gray-200">
+            <h2 className="text-gray-900 font-bold text-lg">Invalidate this session?</h2>
+            <p className="text-sm text-gray-600 mt-2">
+              This marks session <span className="font-semibold">S-{content.session.id}</span> for deletion.
+              Frame data will be removed per the retention policy, and no new frames can be recorded. The
+              session is not deleted immediately.
+            </p>
+            <div className="flex gap-3 mt-5">
+              <button
+                type="button"
+                onClick={() => setInvalidateOpen(false)}
+                disabled={invalidatePending}
+                className="flex-1 border border-gray-200 text-gray-700 hover:bg-gray-50 py-2 rounded-md text-sm font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={onInvalidateSession}
+                disabled={invalidatePending}
+                className="flex-1 bg-amber-500 hover:bg-amber-600 text-white py-2 rounded-md text-sm font-semibold transition-colors"
+              >
+                {invalidatePending ? "Invalidating..." : "Invalidate"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -767,10 +791,12 @@ function SurveyResultsPanel({
       : [];
   const highestLabel =
     highestAttrs.length === 0
-      ? "—"
+      ? null
       : highestAttrs.length === 1
         ? highestAttrs[0]
-        : highestAttrs.slice(0, -1).join(", ") + " & " + highestAttrs[highestAttrs.length - 1];
+        : highestAttrs.length === 2
+          ? `${highestAttrs[0]} and ${highestAttrs[1]}`
+          : `${highestAttrs.slice(0, -1).join(", ")}, and ${highestAttrs[highestAttrs.length - 1]}`;
 
   const overallVal = sr.finalOverallRating ?? null;
   const summaryText = buildInsightSummary(attrRatings);
@@ -804,38 +830,26 @@ function SurveyResultsPanel({
             ))}
           </div>
 
-          {/* Right: large Overall card */}
-          <div className="flex flex-col items-center justify-center bg-white rounded-xl border-2 border-[#e8174a] p-6 min-h-[160px]">
-            <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-2">
-              Overall Rating
-            </p>
-            <p className="text-[clamp(3rem,8vw,4rem)] font-extrabold text-[#e8174a] leading-none">
-              {overallVal != null ? Math.round(overallVal) : "—"}
-            </p>
-            <p className="text-sm text-gray-400 mt-2">out of 9</p>
-          </div>
+          <HeroHedonicCard score={overallVal} label="Overall Rating" />
         </div>
       </div>
 
       {/* C. Key Insights */}
       <div>
         <SectionPill>Key Insights</SectionPill>
-        <div className="flex flex-col sm:flex-row gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <InsightCard
+            variant="metric"
             title="Highest Score"
-            value={maxScore != null ? `${maxScore} / 9` : "—"}
-            sub={highestAttrs.length > 0 ? highestLabel : "No ratings available"}
+            value={maxScore != null ? `${maxScore}/9` : "—"}
+            sub={highestLabel ?? undefined}
           />
           <InsightCard
+            variant="metric"
             title="Overall Acceptance"
-            value={overallVal != null ? `${Math.round(overallVal)} / 9` : "—"}
-            sub="Final overall hedonic rating"
+            value={overallVal != null ? `${Math.round(overallVal)}/9` : "—"}
           />
-          <InsightCard
-            title="Summary"
-            value={validRatings.length > 0 ? (validRatings.reduce((a, b) => a + b, 0) / validRatings.length).toFixed(1) : "—"}
-            sub={summaryText}
-          />
+          <InsightCard variant="narrative" text={summaryText} />
         </div>
       </div>
 
@@ -850,15 +864,6 @@ function SurveyResultsPanel({
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function ProfileCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
-      <p className="text-xs text-gray-500 font-semibold mb-1">{label}</p>
-      <p className="text-base font-bold text-gray-900 truncate">{value}</p>
     </div>
   );
 }
