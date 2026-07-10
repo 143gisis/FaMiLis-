@@ -59,14 +59,57 @@ export function isAdminRole(role: UserRole | null): boolean {
 
 /** True when an active session is stored locally (booth handoff to a tester). */
 export function hasActiveSession(): boolean {
+  return getStoredSessionId() != null;
+}
+
+export function sessionConsentKey(sessionId: number): string {
+  return `familis.sessionConsent.${sessionId}`;
+}
+
+export function markSessionConsented(sessionId: number): void {
   try {
-    const raw = localStorage.getItem(FAMILIS_CURRENT_SESSION_KEY);
-    if (!raw) return false;
-    const s = JSON.parse(raw) as { id?: unknown };
-    return s != null && (typeof s.id === "number" || typeof s.id === "string");
+    localStorage.setItem(sessionConsentKey(sessionId), "1");
+  } catch {
+    /* ignore */
+  }
+}
+
+export function hasSessionConsent(sessionId: number): boolean {
+  try {
+    return localStorage.getItem(sessionConsentKey(sessionId)) === "1";
   } catch {
     return false;
   }
+}
+
+export function getStoredSessionId(): number | null {
+  try {
+    const raw = localStorage.getItem(FAMILIS_CURRENT_SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw) as { id?: unknown };
+    const id = s?.id;
+    if (typeof id === "number" && Number.isFinite(id)) return id;
+    if (typeof id === "string") {
+      const n = Number.parseInt(id, 10);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** True when a booth session exists locally and consent was recorded for it. */
+export function hasConsentedSession(): boolean {
+  const sessionId = getStoredSessionId();
+  if (sessionId == null) return false;
+  return hasSessionConsent(sessionId);
+}
+
+/** Tester landing route: session only after consent, otherwise consent gate. */
+export function testerLandingPath(): string {
+  if (!hasActiveSession()) return "/consent";
+  return hasConsentedSession() ? "/session" : "/consent";
 }
 
 export function hasStoredUser(): boolean {

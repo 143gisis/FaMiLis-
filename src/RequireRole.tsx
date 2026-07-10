@@ -1,5 +1,5 @@
 import { Navigate, Outlet } from "react-router-dom";
-import { getStoredRole, hasActiveSession, isAdminRole, type UserRole } from "./RequireAuth";
+import { getStoredRole, isAdminRole, testerLandingPath, type UserRole } from "./RequireAuth";
 
 interface RequireRoleProps {
   allowed: UserRole[];
@@ -24,6 +24,6 @@ export default function RequireRole({ allowed }: RequireRoleProps) {
   if (isAdminRole(role)) {
     return <Navigate to="/dashboard" replace />;
   }
-  // Tester landing: continue an active session, otherwise the consent gate.
-  return <Navigate to={hasActiveSession() ? "/session" : "/consent"} replace />;
+  // Tester landing: session only after consent, otherwise the consent gate.
+  return <Navigate to={testerLandingPath()} replace />;
 }
