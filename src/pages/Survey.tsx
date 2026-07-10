@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { PageHeader } from "../components/PageHeader";
+import { InfoTip } from "../components/InfoTip";
+import { FoodQuickPicker, SessionContinuationCard, type QuickPickFood } from "../components/survey";
+import type { GlossaryTerm } from "../lib/glossary";
 import { apiFetch } from "../lib/api";
+import { startContinuationSession } from "../lib/startContinuationSession";
 import { RATING_LABELS, getGuideEmoji } from "../lib/ratingLabels";
 import { clearStoredSession, getStoredRole, performLogout } from "../RequireAuth";
 
@@ -13,6 +17,15 @@ type Food = {
   name: string;
   category: string;
 };
+
+/**
+ * Post-submit UI state:
+ * - "none": still on the rating form
+ * - "continuation": survey saved — offer same/different/done (no auto-logout yet)
+ * - "loggingOut": tester chose "I'm done" (or the survey was already submitted
+ *   on a page refresh) — show the thank-you card and start the countdown
+ */
+type PostSubmitPhase = "none" | "continuation" | "loggingOut";
 
 export default function Survey() {
   const location = useLocation() as any;
@@ -34,10 +47,17 @@ export default function Survey() {
   }, [location.state]);
 
   const [food, setFood] = useState<Food | null>(null);
+  const [participantId, setParticipantId] = useState<number | null>(null);
+  const [userId, setUserId] = useState<number | null>(null);
   const [loading, setLoading] = useState<boolean>(!!sessionId);
   const [error, setError] = useState<string | null>(null);
-  const [finished, setFinished] = useState(false);
+  const [postSubmitPhase, setPostSubmitPhase] = useState<PostSubmitPhase>("none");
   const [logoutSeconds, setLogoutSeconds] = useState(AUTO_LOGOUT_SECONDS);
+
+  // Continuation actions (same product / different product)
+  const [continuationStarting, setContinuationStarting] = useState(false);
+  const [continuationError, setContinuationError] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -53,13 +73,18 @@ export default function Survey() {
         if (!res.ok || !json?.ok) {
           throw new Error(json?.error || "Failed to load session.");
         }
+        const sessionRow = json.session as
+          | { participantId?: number | null; userId?: number; hasSurvey?: boolean }
+          | undefined;
         setFood((json.food ?? null) as Food | null);
-        // Only show finished screen if the survey was actually submitted previously
-        // (handles refresh after submission). status === "completed" alone is not
-        // sufficient because stop recording also sets status to completed.
-        if (isTester && json.session?.hasSurvey === true) {
+        setParticipantId(sessionRow?.participantId ?? null);
+        setUserId(sessionRow?.userId ?? null);
+        // Only show the logged-out card if the survey was actually submitted
+        // previously (handles refresh after submission). status === "completed"
+        // alone is not sufficient because stop recording also sets that status.
+        if (isTester && sessionRow?.hasSurvey === true) {
           clearStoredSession();
-          setFinished(true);
+          setPostSubmitPhase("loggingOut");
         }
       } catch (err: any) {
         if (err?.name === "AbortError") return;
@@ -75,7 +100,7 @@ export default function Survey() {
   }, [sessionId, isTester]);
 
   useEffect(() => {
-    if (!finished || !isTester) return;
+    if (postSubmitPhase !== "loggingOut" || !isTester) return;
 
     setLogoutSeconds(AUTO_LOGOUT_SECONDS);
     const tick = setInterval(() => {
@@ -87,7 +112,7 @@ export default function Survey() {
       clearInterval(tick);
       clearTimeout(logout);
     };
-  }, [finished, isTester, navigate]);
+  }, [postSubmitPhase, isTester, navigate]);
 
   const [ratings, setRatings] = useState<{
     color: number | null;
@@ -155,17 +180,13 @@ export default function Survey() {
       }
 
       setSaved(true);
-      if (isTester) {
-        // Show "Survey saved" toast briefly before switching to finished card.
-        setTimeout(() => {
-          clearStoredSession();
-          setFinished(true);
-        }, 700);
-      } else {
-        setTimeout(() => {
-          navigate(`/session-detail?sessionId=${sessionId}`);
-        }, 700);
-      }
+      // Show "Survey saved" toast briefly before offering continuation choices.
+      // participantId/foodId/userId are already captured in state, so clearing
+      // the booth session pointer here is safe for both tester and staff.
+      setTimeout(() => {
+        clearStoredSession();
+        setPostSubmitPhase("continuation");
+      }, 700);
     } catch (err: any) {
       setError(err?.message || "Failed to submit survey.");
     } finally {
@@ -173,11 +194,87 @@ export default function Survey() {
     }
   };
 
+  const handleSameProduct = async () => {
+    if (!food || userId == null) {
+      setContinuationError("Missing session context — please refresh and try again.");
+      return;
+    }
+    setContinuationStarting(true);
+    setContinuationError(null);
+    try {
+      const session = await startContinuationSession({ userId, foodId: food.id, participantId });
+      navigate("/session", { state: { session, food } });
+    } catch (err: any) {
+      setContinuationError(err?.message || "Failed to start the next session.");
+    } finally {
+      setContinuationStarting(false);
+    }
+  };
+
+  const handleConfirmDifferentProduct = async (pickedFood: QuickPickFood) => {
+    if (userId == null) {
+      setContinuationError("Missing session context — please refresh and try again.");
+      return;
+    }
+    setContinuationStarting(true);
+    setContinuationError(null);
+    try {
+      const session = await startContinuationSession({
+        userId,
+        foodId: pickedFood.id,
+        participantId,
+      });
+      setPickerOpen(false);
+      navigate("/session", { state: { session, food: pickedFood } });
+    } catch (err: any) {
+      setContinuationError(err?.message || "Failed to start the next session.");
+    } finally {
+      setContinuationStarting(false);
+    }
+  };
+
+  const handleDone = () => {
+    if (isTester) {
+      setPostSubmitPhase("loggingOut");
+      return;
+    }
+    navigate(sessionId != null ? `/session-detail?sessionId=${sessionId}` : "/dashboard");
+  };
+
+  const handleReturnToSetup = async () => {
+    setContinuationStarting(true);
+    try {
+      let prefillState: Record<string, unknown> = { foodId: food?.id };
+      if (participantId != null) {
+        try {
+          const res = await apiFetch(`/api/participants/${participantId}`);
+          const json = await res.json().catch(() => null);
+          if (res.ok && json?.ok && json.participant) {
+            prefillState = {
+              participantId: json.participant.id,
+              testerLabel: json.participant.testerLabel,
+              age: json.participant.age,
+              gender: json.participant.gender,
+              foodId: food?.id,
+            };
+          } else {
+            prefillState = { participantId, foodId: food?.id };
+          }
+        } catch {
+          prefillState = { participantId, foodId: food?.id };
+        }
+      }
+      navigate("/setup", { state: prefillState });
+    } finally {
+      setContinuationStarting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#f6f7fb]" style={{ fontFamily: "'Montserrat', sans-serif" }}>
       <PageHeader />
 
-      {saved && !finished && (
+      {saved && postSubmitPhase === "none" && (
         <div className="fixed top-4 right-4 z-50 bg-green-600 text-white px-5 py-3 rounded-lg shadow-lg text-sm font-semibold flex items-center gap-2">
           <span aria-hidden="true">✓</span>
           Survey saved
@@ -186,7 +283,7 @@ export default function Survey() {
 
       <main className="px-6 py-10">
         <div className="max-w-6xl mx-auto">
-          {finished ? (
+          {postSubmitPhase === "loggingOut" ? (
             <div className="bg-white rounded-xl border border-gray-200 p-10 shadow-sm text-center max-w-lg mx-auto">
               <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-5">
                 <span className="text-3xl text-green-600" aria-hidden="true">
@@ -206,6 +303,20 @@ export default function Survey() {
                 Returning to login in {logoutSeconds} second{logoutSeconds === 1 ? "" : "s"}…
               </p>
             </div>
+          ) : postSubmitPhase === "continuation" ? (
+            <SessionContinuationCard
+              productName={food?.name ?? "this product"}
+              isTester={isTester}
+              starting={continuationStarting}
+              actionError={pickerOpen ? null : continuationError}
+              onSameProduct={() => void handleSameProduct()}
+              onDifferentProduct={() => {
+                setContinuationError(null);
+                setPickerOpen(true);
+              }}
+              onDone={handleDone}
+              onReturnToSetup={isTester ? undefined : () => void handleReturnToSetup()}
+            />
           ) : (
             <>
               <div className="bg-white px-8 py-6 rounded-[10px] mb-6 text-center border border-gray-200">
@@ -215,7 +326,10 @@ export default function Survey() {
               </div>
 
               <div className="bg-white px-8 py-6 rounded-[10px] mb-6 text-center border border-gray-200">
-                <h3 className="text-base font-bold text-gray-900 mb-3">Evaluation Guide</h3>
+                <h3 className="text-base font-bold text-gray-900 mb-3 flex items-center justify-center gap-1.5">
+                  Evaluation Guide
+                  <InfoTip term="hedonicScore" />
+                </h3>
                 <p className="text-sm text-gray-700 mb-4">
                   Please evaluate based on the 9-point scale rating below:
                 </p>
@@ -264,6 +378,7 @@ export default function Survey() {
                     label="OVERALL PROFILE"
                     value={ratings.overall}
                     onChange={handleSelect("overall")}
+                    infoTerm="hedonicScore"
                   />
                 </div>
 
@@ -297,6 +412,20 @@ export default function Survey() {
           )}
         </div>
       </main>
+
+      {pickerOpen ? (
+        <FoodQuickPicker
+          excludeFoodId={food?.id ?? null}
+          starting={continuationStarting}
+          error={continuationError}
+          onClose={() => {
+            if (continuationStarting) return;
+            setPickerOpen(false);
+            setContinuationError(null);
+          }}
+          onConfirm={(pickedFood) => void handleConfirmDifferentProduct(pickedFood)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -305,15 +434,20 @@ function RatingRow({
   label,
   value,
   onChange,
+  infoTerm,
 }: {
   label: string;
   value: number | null;
   onChange: (v: number) => void;
+  infoTerm?: GlossaryTerm;
 }) {
   return (
     <div className="py-4 px-6">
       <div className="flex items-center justify-between gap-4">
-        <p className="text-xs font-bold text-gray-700 uppercase tracking-wide">{label}</p>
+        <p className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+          <span className="uppercase tracking-wide">{label}</span>
+          {infoTerm ? <InfoTip term={infoTerm} /> : null}
+        </p>
         <div className="flex flex-wrap gap-3 justify-end">
           {RATING_OPTIONS.map((rating) => {
             const selected = value === rating;
