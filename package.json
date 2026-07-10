@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "server": "node ./server/server.js",
     "hash-password": "node ./scripts/hash-password.mjs",
-    "emotion-service": "python ./backend/emotion_service.py"
+    "emotion-service": ".venv\\Scripts\\python.exe ./backend/emotion_service.py"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -18,12 +18,14 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1",
     "mysql2": "^3.11.3",
     "react": "^19.2.4",
     "react-chartjs-2": "^5.3.1",
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.13.1",
+    "server": "^1.0.42",
     "tinyglobby": "^0.2.15"
   },
   "devDependencies": {
