@@ -4,10 +4,23 @@ import { PageHeader, PageTitle } from "../components/PageHeader";
 import { apiFetch } from "../lib/api";
 import { confidenceToTier, confidenceTooltip } from "../lib/confidence";
 import { hedonicLabel } from "../lib/ratingLabels";
+import {
+  FAMILIS_CURRENT_SESSION_KEY,
+  getStoredRole,
+  hasSessionConsent,
+  markSessionConsented,
+  performLogout,
+} from "../RequireAuth";
 
 const FRAME_CAPTURE_MS = 750;
-const NO_FACE_PAUSE_MS = 8000;
-const INFERENCE_FAILURE_PAUSE_COUNT = 5;
+// Seconds without a detected face before auto-pausing; increase to reduce sensitivity.
+const NO_FACE_PAUSE_MS = 20000;
+// Consecutive frame-upload failures before treating the emotion service as offline.
+const INFERENCE_FAILURE_PAUSE_COUNT = 8;
+// Set false to prevent alt-tab / window blur from auto-pausing the session.
+const FOCUS_AUTO_PAUSE_ENABLED = false;
+// Grace period (ms) before a focus-based pause fires when FOCUS_AUTO_PAUSE_ENABLED is true; set 0 for immediate.
+const AUTO_PAUSE_GRACE_MS = 0;
 const USE_DB = true;
 
 type PauseReason =
@@ -115,6 +128,7 @@ type SessionRow = {
   status: "pending" | "active" | "completed" | "cancelled";
   startTime: string | null;
   endTime: string | null;
+  hasConsent?: boolean;
 };
 
 type StoredSession = {
@@ -163,6 +177,8 @@ function SentimentChip({ sentiment }: { sentiment: string | null }) {
 export default function Session() {
   const navigate = useNavigate();
   const location = useLocation();
+  const role = getStoredRole();
+  const isTester = role === "tester";
 
   const storedCurrent = useMemo((): StoredSession | null => {
     try {
@@ -216,6 +232,7 @@ export default function Session() {
   const hasEverResumedRef = useRef(hasEverResumed);
   const consecutiveNoFaceRef = useRef(0);
   const consecutiveInferenceFailuresRef = useRef(0);
+  const autoPauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     isRecordingRef.current = isRecording;
@@ -235,9 +252,16 @@ export default function Session() {
     return Number.isNaN(t) ? null : t;
   }, [session?.startTime]);
 
+  const hasConsent =
+    session?.hasConsent === true ||
+    (sessionId != null && hasSessionConsent(sessionId));
+
+  const consentBlocked = isTester && !loading && session != null && !hasConsent;
+  const sessionReady = !isTester || hasConsent;
+
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   useEffect(() => {
-    if (startEpochMs == null) return;
+    if (startEpochMs == null || !sessionReady) return;
     const tick = () => {
       const now = Date.now();
       let pausePortion = 0;
@@ -253,7 +277,7 @@ export default function Session() {
     tick();
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
-  }, [startEpochMs, isPaused]);
+  }, [startEpochMs, isPaused, sessionReady]);
 
   const persistPauseState = useCallback(() => {
     if (sessionId == null) return;
@@ -304,6 +328,26 @@ export default function Session() {
     hasEverResumedRef.current = true;
     setHasEverResumed(true);
   }, [resumeBlocked]);
+
+  // Schedules a focus-based pause after AUTO_PAUSE_GRACE_MS; cancels if user returns in time.
+  const scheduleAutoPause = useCallback((reason: PauseReason) => {
+    if (autoPauseTimerRef.current != null) return;
+    if (AUTO_PAUSE_GRACE_MS <= 0) {
+      pauseRecording(reason);
+      return;
+    }
+    autoPauseTimerRef.current = setTimeout(() => {
+      autoPauseTimerRef.current = null;
+      pauseRecording(reason);
+    }, AUTO_PAUSE_GRACE_MS);
+  }, [pauseRecording]);
+
+  const cancelAutoPause = useCallback(() => {
+    if (autoPauseTimerRef.current != null) {
+      clearTimeout(autoPauseTimerRef.current);
+      autoPauseTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     persistPauseState();
@@ -366,9 +410,26 @@ export default function Session() {
         const res = await apiFetch(`/api/sessions/${sessionId}`);
         const json = await res.json();
         if (!res.ok || !json?.ok) throw new Error(json?.error || "Failed to load session.");
-        setSession(json.session as SessionRow);
+        const loaded = json.session as SessionRow;
+        if (loaded.hasConsent && loaded.id) {
+          markSessionConsented(loaded.id);
+        }
+        setSession(loaded);
         setFood((prev) => prev ?? (json.food as Food | null));
-        setIsRecording((json.session?.status ?? "active") === "active");
+        setIsRecording((loaded.status ?? "active") === "active");
+
+        if (loaded.startTime) {
+          try {
+            const raw = localStorage.getItem(FAMILIS_CURRENT_SESSION_KEY);
+            if (raw) {
+              const stored = JSON.parse(raw) as Record<string, unknown>;
+              stored.startTime = loaded.startTime;
+              localStorage.setItem(FAMILIS_CURRENT_SESSION_KEY, JSON.stringify(stored));
+            }
+          } catch {
+            /* ignore */
+          }
+        }
       } catch (err: any) {
         setLoadError(err?.message || "Failed to load session.");
       } finally {
@@ -394,18 +455,24 @@ export default function Session() {
   }, []);
 
   useEffect(() => {
+    if (!sessionReady) return;
     cameraSessionActiveRef.current = true;
     void startCamera();
     return () => {
       cameraSessionActiveRef.current = false;
+      stopCamera();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [sessionReady]);
 
   useLayoutEffect(() => {
     return () => {
       cameraSessionActiveRef.current = false;
       stopCamera();
+      if (autoPauseTimerRef.current != null) {
+        clearTimeout(autoPauseTimerRef.current);
+        autoPauseTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -522,25 +589,36 @@ export default function Session() {
   }, [confirmOpen, isPaused, pauseReason]);
 
   useEffect(() => {
+    if (!FOCUS_AUTO_PAUSE_ENABLED) return;
     const onVisibilityChange = () => {
       if (document.hidden && isRecordingRef.current) {
-        pauseRecording("tab-hidden");
+        scheduleAutoPause("tab-hidden");
+      } else if (!document.hidden) {
+        cancelAutoPause();
       }
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, [pauseRecording]);
+  }, [scheduleAutoPause, cancelAutoPause]);
 
   useEffect(() => {
+    if (!FOCUS_AUTO_PAUSE_ENABLED) return;
     const onWindowBlur = () => {
       if (document.hidden) return;
       if (isRecordingRef.current) {
-        pauseRecording("window-blur");
+        scheduleAutoPause("window-blur");
       }
     };
+    const onWindowFocus = () => {
+      cancelAutoPause();
+    };
     window.addEventListener("blur", onWindowBlur);
-    return () => window.removeEventListener("blur", onWindowBlur);
-  }, [pauseRecording]);
+    window.addEventListener("focus", onWindowFocus);
+    return () => {
+      window.removeEventListener("blur", onWindowBlur);
+      window.removeEventListener("focus", onWindowFocus);
+    };
+  }, [scheduleAutoPause, cancelAutoPause]);
 
   useEffect(() => {
     const onOffline = () => {
@@ -616,7 +694,7 @@ export default function Session() {
       <PageHeader onLogoClick={handleBackToDashboard} />
 
       <main className="px-6 py-8">
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-7xl mx-auto">
           <PageTitle
             title="Camera Recording"
             subtitle={food ? `${food.name} · ${food.category}` : "Session"}
@@ -654,9 +732,9 @@ export default function Session() {
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-[2fr_3fr] gap-6">
               {/* Left column — stats + FER */}
-              <div className="space-y-5">
+              <div className="space-y-5 order-2 md:order-1">
                 {/* Timer */}
                 <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                   <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wider">Session Timer</p>
@@ -787,7 +865,7 @@ export default function Session() {
               </div>
 
               {/* Right column — camera + controls */}
-              <div className="space-y-5">
+              <div className="space-y-5 order-1 md:order-2">
                 <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                   <h3 className="text-sm text-gray-700 font-semibold mb-3">Camera Preview</h3>
 
@@ -872,6 +950,34 @@ export default function Session() {
           )}
         </div>
       </main>
+
+      {/* Consent required modal (tester flow) */}
+      {consentBlocked ? (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4 border border-gray-200">
+            <h2 className="text-gray-900 font-bold text-lg">Consent required</h2>
+            <p className="text-gray-600 text-sm mt-2">
+              You need to review and agree to the consent form before recording can begin.
+            </p>
+            <div className="flex gap-3 mt-5">
+              <button
+                type="button"
+                onClick={() => performLogout(navigate)}
+                className="flex-1 border border-gray-200 text-gray-700 hover:bg-gray-50 py-2 rounded-md text-sm font-semibold transition-colors"
+              >
+                Log out
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate("/consent")}
+                className="flex-1 bg-[#e8174a] hover:bg-[#c9143f] text-white py-2 rounded-md text-sm font-semibold transition-colors"
+              >
+                Go to consent form
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* Stop confirm modal */}
       {confirmOpen ? (
