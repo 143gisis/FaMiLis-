@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { FAMILIS_CURRENT_SESSION_KEY, performLogout } from "../RequireAuth";
+import { FAMILIS_CURRENT_SESSION_KEY, markSessionConsented, performLogout } from "../RequireAuth";
 import { apiFetch } from "../lib/api";
 import logo from "../assets/logo.png";
 
@@ -160,6 +160,22 @@ export default function Consent() {
       if (!res.ok || !json?.ok) {
         throw new Error(json?.error || "Failed to record consent.");
       }
+
+      markSessionConsented(storedSession.id);
+
+      if (typeof json.sessionStartTime === "string") {
+        try {
+          const raw = localStorage.getItem(FAMILIS_CURRENT_SESSION_KEY);
+          if (raw) {
+            const stored = JSON.parse(raw) as Record<string, unknown>;
+            stored.startTime = json.sessionStartTime;
+            localStorage.setItem(FAMILIS_CURRENT_SESSION_KEY, JSON.stringify(stored));
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
       navigate("/session");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to record consent.");
