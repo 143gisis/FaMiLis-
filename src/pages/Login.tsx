@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { hasStoredUser, hasActiveSession } from "../RequireAuth";
+import { hasStoredUser, testerLandingPath } from "../RequireAuth";
 import { setToken } from "../lib/api";
 import logo from "../assets/logo.png";
 import loginBg from "../assets/login-bg.png";
@@ -150,7 +150,7 @@ export default function Login() {
 
       const role = data?.user?.role;
       if (role === "tester") {
-        navigate(hasActiveSession() ? "/session" : "/consent");
+        navigate(testerLandingPath());
       } else {
         navigate("/dashboard");
       }
