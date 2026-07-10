@@ -140,6 +140,23 @@ async function start() {
     const d = v instanceof Date ? v : new Date(v);
     return Number.isNaN(d.getTime()) ? null : d.toISOString();
   }
+
+  // Resilient system log writer — failures never bubble up to the caller.
+  async function writeSystemLog(p, { sessionId, logType, message }) {
+    try {
+      await p.query(
+        `INSERT INTO system_logs (session_id, log_type, message) VALUES (?, ?, ?)`,
+        [sessionId ?? null, logType, message]
+      );
+    } catch (err) {
+      console.warn("writeSystemLog failed:", err?.message || err);
+    }
+  }
+
+  // Per-session throttle map for inference-error logs to avoid one row per frame.
+  const inferenceLogThrottle = new Map();
+  const INFERENCE_LOG_THROTTLE_MS = 60_000;
+
   const allowedSessionStatuses = new Set(["pending", "active", "completed", "cancelled"]);
 
   async function prepareSessionFrameUpload(req, res, next) {
@@ -268,6 +285,9 @@ async function start() {
     const testerLabel = typeof rawLabel === "string" ? rawLabel.trim() : "";
     const ageRaw = req.body?.age;
     const genderRaw = req.body?.gender;
+    // Participants UI "Add" sends createOnly so duplicate labels 409 instead of upserting.
+    // Setup omits this flag and keeps the existing reuse-by-label behavior.
+    const createOnly = req.body?.createOnly === true;
     if (!testerLabel) {
       return res.status(400).json({ ok: false, error: "testerLabel is required." });
     }
@@ -298,6 +318,12 @@ async function start() {
       );
 
       if (existing) {
+        if (createOnly) {
+          return res.status(409).json({
+            ok: false,
+            error: "A participant with this label already exists.",
+          });
+        }
         await pool.query(
           `
           UPDATE participants
@@ -350,6 +376,321 @@ async function start() {
     }
   });
 
+  // Update demographics from Participants management UI (admin/staff).
+  app.patch("/api/participants/:participantId", requireRole("admin", "staff"), async (req, res) => {
+    const participantId = Number.parseInt(req.params.participantId, 10);
+    if (!Number.isFinite(participantId)) {
+      return res.status(400).json({ ok: false, error: "Invalid participantId." });
+    }
+
+    const hasLabel = Object.prototype.hasOwnProperty.call(req.body ?? {}, "testerLabel");
+    const hasAge = Object.prototype.hasOwnProperty.call(req.body ?? {}, "age");
+    const hasGender = Object.prototype.hasOwnProperty.call(req.body ?? {}, "gender");
+    if (!hasLabel && !hasAge && !hasGender) {
+      return res.status(400).json({ ok: false, error: "Provide testerLabel, age, and/or gender." });
+    }
+
+    let testerLabel = undefined;
+    if (hasLabel) {
+      const rawLabel = req.body?.testerLabel;
+      testerLabel = typeof rawLabel === "string" ? rawLabel.trim() : "";
+      if (!testerLabel) {
+        return res.status(400).json({ ok: false, error: "testerLabel cannot be empty." });
+      }
+    }
+
+    let age = undefined;
+    if (hasAge) {
+      const ageRaw = req.body?.age;
+      age =
+        ageRaw == null || ageRaw === ""
+          ? null
+          : Number.isFinite(Number(ageRaw))
+            ? Math.round(Number(ageRaw))
+            : null;
+      if (ageRaw != null && ageRaw !== "" && age == null) {
+        return res.status(400).json({ ok: false, error: "age must be a number between 0 and 120." });
+      }
+      if (age != null && (age < 0 || age > 120)) {
+        return res.status(400).json({ ok: false, error: "age must be between 0 and 120." });
+      }
+    }
+
+    let gender = undefined;
+    if (hasGender) {
+      const genderRaw = req.body?.gender;
+      const allowedGenders = new Set(["male", "female", "other"]);
+      gender = genderRaw == null || genderRaw === "" ? null : String(genderRaw);
+      if (gender != null && !allowedGenders.has(gender)) {
+        return res.status(400).json({ ok: false, error: "gender must be male, female, or other." });
+      }
+    }
+
+    try {
+      const [[existing]] = await pool.query(
+        `
+        SELECT participant_id, tester_label, age, gender, created_at
+        FROM participants
+        WHERE participant_id = ?
+        LIMIT 1
+      `,
+        [participantId]
+      );
+      if (!existing) {
+        return res.status(404).json({ ok: false, error: "Participant not found." });
+      }
+
+      if (testerLabel != null) {
+        const [[dup]] = await pool.query(
+          `
+          SELECT participant_id
+          FROM participants
+          WHERE tester_label = ? AND participant_id <> ?
+          LIMIT 1
+        `,
+          [testerLabel, participantId]
+        );
+        if (dup) {
+          return res.status(409).json({
+            ok: false,
+            error: "A participant with this label already exists.",
+          });
+        }
+      }
+
+      const nextLabel = testerLabel !== undefined ? testerLabel : existing.tester_label;
+      const nextAge = age !== undefined ? age : existing.age;
+      const nextGender = gender !== undefined ? gender : existing.gender;
+
+      await pool.query(
+        `
+        UPDATE participants
+        SET tester_label = ?, age = ?, gender = ?
+        WHERE participant_id = ?
+      `,
+        [nextLabel, nextAge, nextGender, participantId]
+      );
+
+      const [[updated]] = await pool.query(
+        `
+        SELECT participant_id, tester_label, age, gender, created_at
+        FROM participants
+        WHERE participant_id = ?
+        LIMIT 1
+      `,
+        [participantId]
+      );
+
+      return res.json({
+        ok: true,
+        participant: {
+          id: Number(updated.participant_id),
+          testerLabel: updated.tester_label == null ? null : String(updated.tester_label),
+          age: updated.age == null ? null : Number(updated.age),
+          gender: updated.gender == null ? null : String(updated.gender),
+          createdAt: toIsoOrNull(updated.created_at),
+        },
+      });
+    } catch (err) {
+      console.error("PATCH /api/participants/:participantId error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
+  // Hard-delete participant; sessions/consent unlink via ON DELETE SET NULL.
+  app.delete("/api/participants/:participantId", requireRole("admin", "staff"), async (req, res) => {
+    const participantId = Number.parseInt(req.params.participantId, 10);
+    if (!Number.isFinite(participantId)) {
+      return res.status(400).json({ ok: false, error: "Invalid participantId." });
+    }
+
+    try {
+      const [[existing]] = await pool.query(
+        `SELECT participant_id FROM participants WHERE participant_id = ? LIMIT 1`,
+        [participantId]
+      );
+      if (!existing) {
+        return res.status(404).json({ ok: false, error: "Participant not found." });
+      }
+
+      const [[active]] = await pool.query(
+        `
+        SELECT session_id
+        FROM sessions
+        WHERE participant_id = ? AND status = 'active'
+        LIMIT 1
+      `,
+        [participantId]
+      );
+      if (active) {
+        return res.status(409).json({
+          ok: false,
+          error: "Cannot delete a participant with an active session.",
+        });
+      }
+
+      await pool.query(`DELETE FROM participants WHERE participant_id = ?`, [participantId]);
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error("DELETE /api/participants/:participantId error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
+  // Single participant profile + lifetime session summary (for /participants/:id).
+  app.get("/api/participants/:participantId", async (req, res) => {
+    const participantId = Number.parseInt(req.params.participantId, 10);
+    if (!Number.isFinite(participantId)) {
+      return res.status(400).json({ ok: false, error: "Invalid participantId." });
+    }
+
+    try {
+      const [[row]] = await pool.query(
+        `
+        SELECT participant_id, tester_label, age, gender, created_at
+        FROM participants
+        WHERE participant_id = ?
+        LIMIT 1
+      `,
+        [participantId]
+      );
+
+      if (!row) {
+        return res.status(404).json({ ok: false, error: "Participant not found." });
+      }
+
+      const [[stats]] = await pool.query(
+        `
+        SELECT COUNT(*) AS session_count, MAX(start_time) AS last_session_at
+        FROM sessions
+        WHERE participant_id = ?
+      `,
+        [participantId]
+      );
+
+      return res.json({
+        ok: true,
+        participant: {
+          id: Number(row.participant_id),
+          testerLabel: row.tester_label == null ? null : String(row.tester_label),
+          age: row.age == null ? null : Number(row.age),
+          gender: row.gender == null ? null : String(row.gender),
+          createdAt: toIsoOrNull(row.created_at),
+        },
+        sessionCount: Number(stats?.session_count ?? 0),
+        lastSessionAt: toIsoOrNull(stats?.last_session_at),
+      });
+    } catch (err) {
+      console.error("GET /api/participants/:participantId error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
+  // Session history for a participant (one food per session; "snacks" = distinct foods across sessions).
+  app.get("/api/participants/:participantId/sessions", async (req, res) => {
+    const participantId = Number.parseInt(req.params.participantId, 10);
+    if (!Number.isFinite(participantId)) {
+      return res.status(400).json({ ok: false, error: "Invalid participantId." });
+    }
+
+    try {
+      const [[participantRow]] = await pool.query(
+        `SELECT participant_id FROM participants WHERE participant_id = ? LIMIT 1`,
+        [participantId]
+      );
+      if (!participantRow) {
+        return res.status(404).json({ ok: false, error: "Participant not found." });
+      }
+
+      const [rows] = await pool.query(
+        `
+        SELECT
+          s.session_id,
+          s.food_id,
+          fp.name AS food_name,
+          fp.category AS food_category,
+          fp.image_url AS food_image_url,
+          s.status,
+          s.start_time,
+          s.end_time,
+          sr.session_id AS survey_session_id,
+          sr.color_rating,
+          sr.flavor_aroma_rating,
+          sr.salt_sweet_rating,
+          sr.texture_rating,
+          sr.final_overall_rating,
+          (SELECT COUNT(*) FROM frame_logs fl WHERE fl.session_id = s.session_id) AS frame_count,
+          EXISTS(SELECT 1 FROM consent c WHERE c.session_id = s.session_id) AS has_consent
+        FROM sessions s
+        LEFT JOIN food_products fp ON fp.food_id = s.food_id
+        LEFT JOIN survey_results sr ON sr.session_id = s.session_id
+        WHERE s.participant_id = ?
+        ORDER BY s.start_time DESC, s.session_id DESC
+      `,
+        [participantId]
+      );
+
+      return res.json({
+        ok: true,
+        sessions: (rows ?? []).map((r) => ({
+          id: Number(r.session_id),
+          foodId: r.food_id == null ? null : Number(r.food_id),
+          foodName: r.food_name == null ? null : String(r.food_name),
+          foodCategory: r.food_category == null ? null : String(r.food_category),
+          foodImageUrl: r.food_image_url == null ? null : String(r.food_image_url),
+          status: r.status,
+          startTime: toIsoOrNull(r.start_time),
+          endTime: toIsoOrNull(r.end_time),
+          hasSurvey: r.survey_session_id != null,
+          hasConsent: Boolean(r.has_consent),
+          frameCount: Number(r.frame_count ?? 0),
+          survey:
+            r.survey_session_id == null
+              ? null
+              : {
+                  color: r.color_rating == null ? null : Number(r.color_rating),
+                  flavorAroma: r.flavor_aroma_rating == null ? null : Number(r.flavor_aroma_rating),
+                  saltSweet: r.salt_sweet_rating == null ? null : Number(r.salt_sweet_rating),
+                  texture: r.texture_rating == null ? null : Number(r.texture_rating),
+                  overall: r.final_overall_rating == null ? null : Number(r.final_overall_rating),
+                },
+        })),
+      });
+    } catch (err) {
+      console.error("GET /api/participants/:participantId/sessions error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
+  // Consent freshness check for the survey continuation flow (24h same-day skip).
+  app.get("/api/participants/:participantId/consent-status", async (req, res) => {
+    const participantId = Number.parseInt(req.params.participantId, 10);
+    if (!Number.isFinite(participantId)) {
+      return res.status(400).json({ ok: false, error: "Invalid participantId." });
+    }
+    const withinHoursRaw = Number(req.query.withinHours);
+    const withinHours = Number.isFinite(withinHoursRaw) && withinHoursRaw > 0 ? withinHoursRaw : 24;
+
+    try {
+      const [[row]] = await pool.query(
+        `SELECT MAX(agreed_at) AS last_consent_at FROM consent WHERE participant_id = ?`,
+        [participantId]
+      );
+
+      const lastConsentAt = toIsoOrNull(row?.last_consent_at);
+      let hasValidConsent = false;
+      if (lastConsentAt) {
+        const ageMs = Date.now() - new Date(lastConsentAt).getTime();
+        hasValidConsent = ageMs >= 0 && ageMs <= withinHours * 3600 * 1000;
+      }
+
+      return res.json({ ok: true, hasValidConsent, lastConsentAt });
+    } catch (err) {
+      console.error("GET /api/participants/:participantId/consent-status error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
   // Log a participant's facial-recording consent (audit trail).
   app.post("/api/consent", async (req, res) => {
     const { sessionId, participantId, deviceId, facialRecording, consentVersion } = req.body ?? {};
@@ -387,6 +728,7 @@ async function start() {
       }
 
       const ipAddress = (req.ip || req.socket?.remoteAddress || "").slice(0, 45) || null;
+      const agreedAt = new Date();
       const [result] = await pool.query(
         `
         INSERT INTO consent (session_id, participant_id, device_id, facial_recording, consent_version, ip_address)
@@ -394,6 +736,16 @@ async function start() {
       `,
         [sId, pId, device, true, version, ipAddress]
       );
+
+      // Reset session clock so elapsed time excludes the consent step.
+      let sessionStartTime = null;
+      if (sId != null) {
+        sessionStartTime = agreedAt.toISOString();
+        await pool.query(`UPDATE sessions SET start_time = ? WHERE session_id = ?`, [
+          agreedAt,
+          sId,
+        ]);
+      }
 
       return res.json({
         ok: true,
@@ -404,8 +756,9 @@ async function start() {
           deviceId: device,
           facialRecording: true,
           consentVersion: version,
-          agreedAt: new Date().toISOString(),
+          agreedAt: sessionStartTime ?? agreedAt.toISOString(),
         },
+        sessionStartTime,
       });
     } catch (err) {
       console.error("POST /api/consent error:", err);
@@ -557,6 +910,63 @@ async function start() {
       return res.json({ ok: true, imageUrl: null });
     } catch (err) {
       console.error("DELETE /api/foods/:foodId/image error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
+  // Edit food name and/or category
+  app.patch("/api/foods/:foodId", async (req, res) => {
+    const foodId = Number.parseInt(req.params.foodId, 10);
+    if (!Number.isFinite(foodId)) {
+      return res.status(400).json({ ok: false, error: "Invalid foodId." });
+    }
+
+    const { name, category } = req.body ?? {};
+    const trimName = typeof name === "string" ? name.trim() : null;
+    const trimCategory = typeof category === "string" ? category.trim() : null;
+
+    if (trimName === null && trimCategory === null) {
+      return res.status(400).json({ ok: false, error: "At least one of name or category is required." });
+    }
+    if (trimName !== null && trimName === "") {
+      return res.status(400).json({ ok: false, error: "name cannot be empty." });
+    }
+    if (trimCategory !== null && trimCategory === "") {
+      return res.status(400).json({ ok: false, error: "category cannot be empty." });
+    }
+
+    try {
+      const setClauses = [];
+      const params = [];
+      if (trimName !== null) { setClauses.push("name = ?"); params.push(trimName); }
+      if (trimCategory !== null) { setClauses.push("category = ?"); params.push(trimCategory); }
+      params.push(foodId);
+
+      const [result] = await pool.query(
+        `UPDATE food_products SET ${setClauses.join(", ")} WHERE food_id = ?`,
+        params
+      );
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ ok: false, error: "Food not found." });
+      }
+
+      const [[row]] = await pool.query(
+        `SELECT food_id, name, category, image_url, created_at FROM food_products WHERE food_id = ? LIMIT 1`,
+        [foodId]
+      );
+
+      return res.json({
+        ok: true,
+        food: {
+          id: Number(row.food_id),
+          name: String(row.name),
+          category: String(row.category ?? ""),
+          imageUrl: row.image_url == null ? null : String(row.image_url),
+          createdAt: toIsoOrNull(row.created_at),
+        },
+      });
+    } catch (err) {
+      console.error("PATCH /api/foods/:foodId error:", err);
       return res.status(500).json({ ok: false, error: "Server error." });
     }
   });
@@ -860,6 +1270,21 @@ async function start() {
     }
 
     try {
+      // Block starting a second session while this participant still has one active
+      // (e.g. a stale "same product" / "different product" continuation double-click).
+      if (pId != null) {
+        const [[activeRow]] = await pool.query(
+          `SELECT session_id FROM sessions WHERE participant_id = ? AND status = 'active' LIMIT 1`,
+          [pId]
+        );
+        if (activeRow) {
+          return res.status(409).json({
+            ok: false,
+            error: `This participant already has an active session (S-${activeRow.session_id}). Finish or stop it before starting a new one.`,
+          });
+        }
+      }
+
       const [result] = await pool.query(
         `
         INSERT INTO sessions (user_id, participant_id, food_id, start_time, status)
@@ -868,10 +1293,13 @@ async function start() {
         [uId, pId, fId]
       );
 
+      const newSessionId = Number(result.insertId);
+      void writeSystemLog(pool, { sessionId: newSessionId, logType: "info", message: "Session started." });
+
       return res.json({
         ok: true,
         session: {
-          id: Number(result.insertId),
+          id: newSessionId,
           userId: uId,
           participantId: pId,
           foodId: fId,
@@ -962,7 +1390,8 @@ async function start() {
           fp.name AS food_name,
           fp.category AS food_category,
           fp.image_url AS food_image_url,
-          EXISTS(SELECT 1 FROM survey_results sr WHERE sr.session_id = s.session_id) AS has_survey
+          EXISTS(SELECT 1 FROM survey_results sr WHERE sr.session_id = s.session_id) AS has_survey,
+          EXISTS(SELECT 1 FROM consent c WHERE c.session_id = s.session_id) AS has_consent
         FROM sessions s
         LEFT JOIN food_products fp ON fp.food_id = s.food_id
         WHERE s.session_id = ?
@@ -988,6 +1417,7 @@ async function start() {
           startTime: toIsoOrNull(r.start_time),
           endTime: toIsoOrNull(r.end_time),
           hasSurvey: Boolean(r.has_survey),
+          hasConsent: Boolean(r.has_consent),
         },
         food: r.food_name
           ? {
@@ -1047,9 +1477,11 @@ async function start() {
           return res.status(404).json({ ok: false, error: "Session not found." });
         }
         if (sess.invalidated_at != null) {
+          void writeSystemLog(pool, { sessionId, logType: "warning", message: "Frame upload rejected: session is invalidated." });
           return res.status(409).json({ ok: false, error: "Session is invalidated; frame capture is disabled." });
         }
         if (sess.status !== "active") {
+          void writeSystemLog(pool, { sessionId, logType: "warning", message: `Frame upload rejected: session status is '${sess.status}'.` });
           return res.status(409).json({ ok: false, error: "Session is not active; cannot record frames." });
         }
 
@@ -1090,6 +1522,19 @@ async function start() {
         } catch (err) {
           inferenceError = err?.message || String(err);
           console.warn("Frame inference error:", inferenceError);
+        }
+
+        if (!inferenceOk && inferenceError) {
+          const now = Date.now();
+          const lastLogged = inferenceLogThrottle.get(sessionId) ?? 0;
+          if (now - lastLogged >= INFERENCE_LOG_THROTTLE_MS) {
+            inferenceLogThrottle.set(sessionId, now);
+            void writeSystemLog(pool, {
+              sessionId,
+              logType: "warning",
+              message: `Emotion inference failed: ${inferenceError}`,
+            });
+          }
         }
 
         const relUrl = `/uploads/frame_logs/${sessionId}/${req.file.filename}`;
@@ -1195,6 +1640,13 @@ async function start() {
         [sessionId]
       );
 
+      const [[participantRow]] = sessionRow.participant_id
+        ? await pool.query(
+            `SELECT participant_id, tester_label FROM participants WHERE participant_id = ? LIMIT 1`,
+            [sessionRow.participant_id]
+          )
+        : [[null]];
+
       const [[surveyRow]] = await pool.query(
         `
         SELECT
@@ -1234,6 +1686,12 @@ async function start() {
               name: String(sessionRow.food_name),
               category: String(sessionRow.food_category ?? ""),
               imageUrl: sessionRow.food_image_url == null ? null : String(sessionRow.food_image_url),
+            }
+          : null,
+        participant: participantRow
+          ? {
+              id: Number(participantRow.participant_id),
+              testerLabel: participantRow.tester_label == null ? null : String(participantRow.tester_label),
             }
           : null,
         metrics: {
@@ -1319,6 +1777,7 @@ async function start() {
       );
 
       void clearEmotionHistory(sessionId);
+      void writeSystemLog(pool, { sessionId, logType: "info", message: "Session completed." });
 
       return res.json({
         ok: true,
@@ -1354,6 +1813,16 @@ async function start() {
     }
 
     try {
+      // Read old status before updating so we can log the transition.
+      const [[oldRow]] = await pool.query(
+        `SELECT status FROM sessions WHERE session_id = ? LIMIT 1`,
+        [sessionId]
+      );
+      if (!oldRow) {
+        return res.status(404).json({ ok: false, error: "Session not found." });
+      }
+      const oldStatus = oldRow.status;
+
       const [result] = await pool.query(
         `
         UPDATE sessions
@@ -1379,6 +1848,11 @@ async function start() {
       `,
         [sessionId]
       );
+      void writeSystemLog(pool, {
+        sessionId,
+        logType: "info",
+        message: `Session status changed from '${oldStatus}' to '${row.status}'.`,
+      });
       return res.json({
         ok: true,
         session: {
@@ -1429,6 +1903,7 @@ async function start() {
         [sessionId]
       );
 
+      void writeSystemLog(pool, { sessionId, logType: "warning", message: "Session flagged for deletion (invalidated)." });
       return res.json({
         ok: true,
         session: {
@@ -1574,6 +2049,7 @@ async function start() {
         ]
       );
 
+      void writeSystemLog(pool, { sessionId, logType: "info", message: "Survey submitted." });
       return res.json({ ok: true, sessionId });
     } catch (err) {
       console.error("POST /api/sessions/:sessionId/survey error:", err);
