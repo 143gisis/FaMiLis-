@@ -14,6 +14,7 @@ type FoodCardProps = {
   imageSrc: string | null;
   isSelected: boolean;
   onSelect: () => void;
+  onEdit: () => void;
   onImageClick: () => void;
   onDelete: () => void;
   onStartSession: () => void;
@@ -27,6 +28,7 @@ export function FoodCard({
   imageSrc,
   isSelected,
   onSelect,
+  onEdit,
   onImageClick,
   onDelete,
   onStartSession,
@@ -80,9 +82,23 @@ export function FoodCard({
         className="px-4 pt-4 pb-3 text-center flex-1 w-full hover:bg-gray-50/80 transition-colors"
         aria-label={`Select ${food.name}`}
       >
-        <h3 className="text-lg font-bold text-gray-900 leading-tight">{food.name}</h3>
+        <div className="flex items-center justify-center gap-1.5">
+          <h3 className="text-lg font-bold text-gray-900 leading-tight">{food.name}</h3>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onEdit(); }}
+            title="Edit food"
+            className="shrink-0 text-gray-400 hover:text-gray-700 transition-colors p-0.5 rounded"
+            aria-label={`Edit ${food.name}`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+            </svg>
+          </button>
+        </div>
         <p className="text-xs text-gray-500 mt-1">{food.category}</p>
         <div className="mt-2 space-y-0.5 text-sm text-gray-600">
+          <p className="font-bold">Latest Session Details</p>     
           <p>Duration: {durationLabel}</p>
           <p>Created: {formatDate(food.createdAt)}</p>
         </div>

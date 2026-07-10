@@ -105,6 +105,16 @@ export default function Dashboard() {
   const [imageModalError, setImageModalError] = useState<string | null>(null);
   const [imageSaving, setImageSaving] = useState(false);
   const [imageRemoving, setImageRemoving] = useState(false);
+
+  // Edit food modal state
+  const [editingFood, setEditingFood] = useState<Food | null>(null);
+  const [editFoodFields, setEditFoodFields] = useState({ name: "", category: "" });
+  const [editFoodImageFile, setEditFoodImageFile] = useState<File | null>(null);
+  const [editFoodImagePreview, setEditFoodImagePreview] = useState<string | null>(null);
+  const [editFoodSaving, setEditFoodSaving] = useState(false);
+  const [editFoodError, setEditFoodError] = useState<string | null>(null);
+  const editFoodImageInputRef = useRef<HTMLInputElement | null>(null);
+
   const foodsAbortRef = useRef<AbortController | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -166,6 +176,108 @@ export default function Dashboard() {
     setImagePreviewUrl(null);
     setImageModalError(null);
     if (imageFileInputRef.current) imageFileInputRef.current.value = "";
+  };
+
+  useEffect(() => {
+    if (!editFoodImageFile) {
+      setEditFoodImagePreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(editFoodImageFile);
+    setEditFoodImagePreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [editFoodImageFile]);
+
+  const openEditFoodModal = (food: Food) => {
+    setEditingFood(food);
+    setEditFoodFields({ name: food.name, category: food.category });
+    setEditFoodImageFile(null);
+    setEditFoodImagePreview(null);
+    setEditFoodError(null);
+    setEditFoodSaving(false);
+    if (editFoodImageInputRef.current) editFoodImageInputRef.current.value = "";
+  };
+
+  const closeEditFoodModal = () => {
+    setEditingFood(null);
+    setEditFoodImageFile(null);
+    setEditFoodImagePreview(null);
+    setEditFoodError(null);
+    setEditFoodSaving(false);
+    if (editFoodImageInputRef.current) editFoodImageInputRef.current.value = "";
+  };
+
+  const onSaveEditFood = async () => {
+    if (!editingFood) return;
+    const name = editFoodFields.name.trim();
+    const category = editFoodFields.category.trim();
+    if (!name || !category) {
+      setEditFoodError("Name and category are required.");
+      return;
+    }
+    setEditFoodSaving(true);
+    setEditFoodError(null);
+    try {
+      // Update metadata if changed.
+      if (name !== editingFood.name || category !== editingFood.category) {
+        const res = await apiFetch(`/api/foods/${editingFood.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, category }),
+        });
+        const json = await res.json().catch(() => null);
+        if (!res.ok || !json?.ok) {
+          throw new Error(json?.error || "Failed to update food.");
+        }
+      }
+
+      // Upload new image if one was chosen.
+      let updatedImageUrl = editingFood.imageUrl;
+      if (editFoodImageFile) {
+        const fd = new FormData();
+        fd.append("image", editFoodImageFile);
+        const imgRes = await apiFetch(`/api/foods/${editingFood.id}/image`, {
+          method: "POST",
+          body: fd,
+        });
+        const imgJson = await imgRes.json().catch(() => null);
+        if (imgRes.ok && imgJson?.ok) {
+          updatedImageUrl = String(imgJson.imageUrl ?? "");
+        }
+      }
+
+      setFoods((prev) =>
+        prev.map((f) =>
+          f.id === editingFood.id ? { ...f, name, category, imageUrl: updatedImageUrl } : f
+        )
+      );
+      closeEditFoodModal();
+    } catch (err: any) {
+      setEditFoodError(err?.message || "Failed to save changes.");
+    } finally {
+      setEditFoodSaving(false);
+    }
+  };
+
+  const onRemoveEditFoodImage = async () => {
+    if (!editingFood) return;
+    setEditFoodSaving(true);
+    setEditFoodError(null);
+    try {
+      const res = await apiFetch(`/api/foods/${editingFood.id}/image`, { method: "DELETE" });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || "Failed to remove image.");
+      }
+      setFoods((prev) =>
+        prev.map((f) => (f.id === editingFood.id ? { ...f, imageUrl: null } : f))
+      );
+      setEditingFood((prev) => (prev ? { ...prev, imageUrl: null } : prev));
+    } catch (err: any) {
+      setEditFoodError(err?.message || "Failed to remove image.");
+    } finally {
+      setEditFoodSaving(false);
+    }
   };
 
   const updateFoodImageUrl = (foodId: number, imageUrl: string | null) => {
@@ -647,6 +759,7 @@ export default function Dashboard() {
                       isSelected={expandedFoodId === food.id}
                       formatDate={formatDate}
                       onSelect={() => setExpandedFoodId(food.id)}
+                      onEdit={() => openEditFoodModal(food)}
                       onImageClick={() => openImageModal(food)}
                       onDelete={() => setFoodToDelete(food)}
                       onStartSession={() => navigate("/setup", { state: { foodId: food.id } })}
@@ -665,7 +778,7 @@ export default function Dashboard() {
                     <h2 className="text-gray-900 font-bold">
                       {selectedFood ? selectedFood.name : "Statistics & Analytics"}
                     </h2>
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-s text-gray-500 mt-1">
                       Live analytics from DB
                     </p>
                   </div>
@@ -707,7 +820,7 @@ export default function Dashboard() {
                   <>
                     <div>
                       <SectionPill>Product Analytics</SectionPill>
-                      <p className="text-xs text-gray-500 -mt-1 mb-4">
+                      <p className="text-s text-gray-500 -mt-1 mb-4">
                         {selectedFood.name} · Live analytics from DB
                       </p>
 
@@ -767,56 +880,77 @@ export default function Dashboard() {
                       >
                         <div>
                           <SectionPill>Reaction Distribution</SectionPill>
-                          <p className="text-xs text-gray-500 -mt-1 mb-4">
+                          <p className="text-s text-gray-500 -mt-1 mb-4">
                             Do consumers like this product? (frame-by-frame FER)
                           </p>
-                          <div className="bg-gray-50 rounded-xl border border-gray-100 p-4 flex flex-col sm:flex-row items-center gap-6">
-                            <div
-                              className="w-32 h-32 rounded-full border border-gray-100 shadow-sm flex-shrink-0"
-                              style={{
-                                background:
-                                  Number(stats.frameLogCount ?? 0) <= 0
-                                    ? "conic-gradient(#e5e7eb 0% 100%)"
-                                    : `conic-gradient(${stats.distribution
-                                        .map((d, i) => {
-                                          const start =
-                                            i === 0
-                                              ? 0
-                                              : stats.distribution
-                                                  .slice(0, i)
-                                                  .reduce((a, b) => a + b.value, 0);
-                                          const end = start + d.value;
-                                          return `${d.color} ${start}% ${end}%`;
-                                        })
-                                        .join(", ")})`,
-                              }}
-                              aria-label="Reaction distribution pie chart"
-                            />
-                            <div className="space-y-1.5 w-full sm:flex-1">
-                              {stats.distribution.map((d) => (
-                                <div key={d.label} className="flex items-center gap-1.5 text-sm">
-                                  <span
-                                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                                    style={{ backgroundColor: d.color }}
-                                    aria-hidden="true"
-                                  />
-                                  <span className="text-gray-600">
-                                    {d.label}: <span className="font-semibold text-gray-900">{d.value}%</span>
-                                  </span>
-                                </div>
-                              ))}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="bg-gray-50 rounded-lg border border-gray-100 p-4">
+                              <p className="text-s text-gray-600 font-semibold mb-2">
+                                Reaction distribution
+                              </p>
+                              <div className="min-h-[200px] h-[240px] flex items-center justify-center">
+                                <div
+                                  className="aspect-square h-full max-h-[220px] w-auto max-w-full rounded-full border border-gray-100 shadow-sm"
+                                  style={{
+                                    background:
+                                      Number(stats.frameLogCount ?? 0) <= 0
+                                        ? "conic-gradient(#e5e7eb 0% 100%)"
+                                        : `conic-gradient(${stats.distribution
+                                            .map((d, i) => {
+                                              const start =
+                                                i === 0
+                                                  ? 0
+                                                  : stats.distribution
+                                                      .slice(0, i)
+                                                      .reduce((a, b) => a + b.value, 0);
+                                              const end = start + d.value;
+                                              return `${d.color} ${start}% ${end}%`;
+                                            })
+                                            .join(", ")})`,
+                                  }}
+                                  aria-label="Reaction distribution pie chart"
+                                />
+                              </div>
+                            </div>
+                            <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
+                              <p className="text-s text-gray-600 font-semibold mb-2">Breakdown</p>
+                              <div className="min-h-[200px] h-[240px] flex flex-col justify-center">
+                                {stats.distribution.map((d) => (
+                                  <div key={d.label} className="mb-4 last:mb-0">
+                                    <div className="flex items-center justify-between mb-1.5">
+                                      <span className="text-sm text-gray-700 font-medium flex items-center gap-1.5">
+                                        <span
+                                          className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                          style={{ backgroundColor: d.color }}
+                                          aria-hidden="true"
+                                        />
+                                        {d.label}
+                                      </span>
+                                      <span className="text-sm text-gray-900 font-semibold tabular-nums">
+                                        {d.value}%
+                                      </span>
+                                    </div>
+                                    <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                                      <div
+                                        className="h-full rounded-full transition-all duration-300"
+                                        style={{ width: `${d.value}%`, backgroundColor: d.color }}
+                                      />
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           </div>
                         </div>
 
                         <div>
-                          <SectionPill>Sensory Attributes</SectionPill>
-                          <p className="text-xs text-gray-500 -mt-1 mb-4">
+                          <SectionPill infoTerm="sensoryAttributes">Sensory Attributes</SectionPill>
+                          <p className="text-s text-gray-500 -mt-1 mb-4">
                             What consumers like about the product (survey-based)
                           </p>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="bg-gray-50 rounded-lg border border-gray-100 p-4">
-                              <p className="text-xs text-gray-600 font-semibold mb-2">Spider chart</p>
+                              <p className="text-s text-gray-600 font-semibold mb-2">Spider chart</p>
                               <div className="min-h-[200px] h-[240px]">
                                 <Radar data={radarChartData as any} options={radarChartOptions as any} />
                               </div>
@@ -835,9 +969,9 @@ export default function Dashboard() {
                         </div>
 
                         <div>
-                          <SectionPill>FER Timeline</SectionPill>
-                          <p className="text-xs text-gray-500 -mt-1 mb-4">
-                            Emotion over time during testing
+                          <SectionPill infoTerm="fer">FER Timeline (In-Session Reaction Phases)</SectionPill>
+                          <p className="text-s text-gray-500 -mt-1 mb-4">
+                            Emotion over time during testing — distinct from session-over-time trends
                           </p>
                           <div className="bg-gray-50 rounded-lg border border-gray-100 p-4">
                             <p className="text-xs text-gray-600 font-semibold mb-2">
@@ -851,12 +985,12 @@ export default function Dashboard() {
 
                         <div>
                           <SectionPill>Demographics</SectionPill>
-                          <p className="text-xs text-gray-500 -mt-1 mb-4">
+                          <p className="text-s text-gray-500 -mt-1 mb-4">
                             Consumer profile and survey-based hedonic scores
                           </p>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
-                              <p className="text-xs text-gray-700 font-semibold mb-3">
+                              <p className="text-s text-gray-700 font-semibold mb-3">
                                 Hedonic Score by Age Group
                               </p>
                               {stats.byAge.length === 0 ? (
@@ -873,7 +1007,7 @@ export default function Dashboard() {
                               )}
                             </div>
                             <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
-                              <p className="text-xs text-gray-700 font-semibold mb-3">
+                              <p className="text-s text-gray-700 font-semibold mb-3">
                                 Hedonic Score by Gender
                               </p>
                               {stats.byGender.length === 0 ? (
@@ -986,6 +1120,96 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+      {/* Edit Food Modal */}
+      {editingFood ? (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
+            <h2 className="text-gray-900 font-bold mb-4">Edit Food</h2>
+
+            <div className="space-y-3">
+              <Field label="Food Name *">
+                <input
+                  type="text"
+                  value={editFoodFields.name}
+                  onChange={(e) => setEditFoodFields((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="e.g. Ice Cream"
+                  className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30"
+                />
+              </Field>
+
+              <Field label="Category *">
+                <input
+                  type="text"
+                  value={editFoodFields.category}
+                  onChange={(e) => setEditFoodFields((p) => ({ ...p, category: e.target.value }))}
+                  placeholder="e.g. dessert"
+                  className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30"
+                />
+              </Field>
+
+              <Field label="Replace Image (optional)">
+                {editingFood.imageUrl && !editFoodImageFile ? (
+                  <div className="mb-2 flex items-center gap-3">
+                    <img
+                      src={toApiUrl(editingFood.imageUrl) ?? undefined}
+                      alt={editingFood.name}
+                      className="h-14 w-20 object-cover rounded border border-gray-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void onRemoveEditFoodImage()}
+                      disabled={editFoodSaving}
+                      className="text-xs text-red-600 hover:text-red-700 font-semibold disabled:opacity-50"
+                    >
+                      Remove image
+                    </button>
+                  </div>
+                ) : null}
+                {editFoodImagePreview ? (
+                  <div className="mb-2">
+                    <img
+                      src={editFoodImagePreview}
+                      alt="Preview"
+                      className="h-14 w-20 object-cover rounded border border-gray-200"
+                    />
+                  </div>
+                ) : null}
+                <input
+                  ref={editFoodImageInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setEditFoodImageFile(e.target.files?.[0] ?? null)}
+                  className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30"
+                />
+              </Field>
+            </div>
+
+            {editFoodError ? (
+              <p className="text-xs text-red-600 mt-3">{editFoodError}</p>
+            ) : null}
+
+            <div className="flex gap-3 mt-5">
+              <button
+                type="button"
+                onClick={closeEditFoodModal}
+                disabled={editFoodSaving}
+                className="flex-1 border border-gray-200 text-gray-700 hover:bg-gray-50 py-2 rounded-md text-sm font-semibold transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void onSaveEditFood()}
+                disabled={editFoodSaving}
+                className="flex-1 bg-[#e8174a] hover:bg-[#c9143f] text-white py-2 rounded-md text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {editFoodSaving ? "Saving…" : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {foodToDelete ? (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">

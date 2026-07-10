@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { PageHeader } from "../components/PageHeader";
+import { InfoTip } from "../components/InfoTip";
 import { SessionMultiSelect, type SessionOption } from "../components/dashboard";
 import {
   ColoredRatingBar,
@@ -63,6 +64,11 @@ type SurveyResults = {
   remarks: string | null;
 };
 
+type Participant = {
+  id: number;
+  testerLabel: string | null;
+};
+
 type SessionDetailPayload = {
   session: {
     id: number;
@@ -75,6 +81,7 @@ type SessionDetailPayload = {
     endTime: string | null;
   };
   food: Food | null;
+  participant: Participant | null;
   metrics: {
     totalFrames: number;
     meanConfidence: number | null; // 0..1
@@ -411,10 +418,15 @@ export default function SessionDetail() {
                       {formatStatus(status)}
                     </span>
                     {content.session.invalidatedAt ? (
-                      <span className="inline-flex items-center px-3 py-1 rounded-full text-[11px] font-semibold bg-red-100 text-red-700 border border-red-200">
+                      <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-semibold bg-red-100 text-red-700 border border-red-200">
                         Invalidated
+                        <InfoTip term="invalidated" />
                       </span>
                     ) : null}
+                    <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-semibold bg-gray-100 text-gray-600 border border-gray-200">
+                      Retention: {content.session.retentionStatus.replace("_", " ")}
+                      <InfoTip term="retentionStatus" />
+                    </span>
                   </div>
                   <p className="text-sm text-gray-600 mt-1">
                     {content.food ? `${content.food.name} - ${content.food.category}` : "Session"}
@@ -422,6 +434,16 @@ export default function SessionDetail() {
                   <p className="text-xs text-gray-500 mt-1">
                     {formatDateTime(content.session.startTime)} - {formatDateTime(content.session.endTime)}
                   </p>
+                  {content.participant ? (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/participants/${content.participant!.id}`)}
+                      className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#e8174a] hover:text-[#c9143f] transition-colors"
+                    >
+                      <span aria-hidden="true">👤</span>
+                      View participant{content.participant.testerLabel ? ` (${content.participant.testerLabel})` : ""}
+                    </button>
+                  ) : null}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <SessionMultiSelect
@@ -482,12 +504,14 @@ export default function SessionDetail() {
                   iconBg="bg-green-50 text-green-600"
                   title="Avg Confidence Score"
                   value={meanConfidencePct == null ? "-" : `${meanConfidencePct}%`}
+                  infoTerm="confidenceScore"
                 />
                 <MetricCard
                   icon="🍦"
                   iconBg="bg-red-50 text-[#e8174a]"
                   title="Avg Hedonic Score"
                   value={meanHedonicOutOf9 == null ? "-" : `${meanHedonicOutOf9.toFixed(1)}`}
+                  infoTerm="hedonicScore"
                 />
               </div>
 
@@ -816,7 +840,7 @@ function SurveyResultsPanel({
 
       {/* B. Sensory Rating Breakdown */}
       <div>
-        <SectionPill>Sensory Rating Breakdown</SectionPill>
+        <SectionPill infoTerm="sensoryAttributes">Sensory Rating Breakdown</SectionPill>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
           {/* Left: colored attribute bars */}
           <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
