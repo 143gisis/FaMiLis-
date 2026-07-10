@@ -9,6 +9,8 @@ import Session from "./pages/Session";
 import SessionDetail from "./pages/SessionDetail";
 import Survey from "./pages/Survey";
 import Consent from "./pages/Consent";
+import Participants from "./pages/Participants";
+import ParticipantDetail from "./pages/ParticipantDetail";
 
 export default function App() {
   return (
@@ -21,6 +23,8 @@ export default function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/setup" element={<Setup />} />
             <Route path="/session-detail" element={<SessionDetail />} />
+            <Route path="/participants" element={<Participants />} />
+            <Route path="/participants/:id" element={<ParticipantDetail />} />
           </Route>
 
           {/* Tester: consent gate only */}

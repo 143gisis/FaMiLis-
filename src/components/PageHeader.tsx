@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { performLogout } from "../RequireAuth";
+import { getStoredRole, isAdminRole, performLogout } from "../RequireAuth";
 import logo from "../assets/logo.png";
 
 interface PageHeaderProps {
@@ -9,6 +9,7 @@ interface PageHeaderProps {
 export function PageHeader({ onLogoClick }: PageHeaderProps) {
   const navigate = useNavigate();
   const handleLogo = onLogoClick ?? (() => navigate("/dashboard"));
+  const canSeeParticipants = isAdminRole(getStoredRole());
 
   return (
     <header className="bg-[#e8174a] text-white">
@@ -30,13 +31,24 @@ export function PageHeader({ onLogoClick }: PageHeaderProps) {
           </div>
         </button>
 
-        <button
-          type="button"
-          onClick={() => performLogout(navigate)}
-          className="bg-white/15 hover:bg-white/25 text-white border border-white/30 transition-colors px-3 py-1.5 sm:px-4 sm:py-2 rounded-md text-sm font-semibold"
-        >
-          Log Out
-        </button>
+        <nav className="flex items-center gap-2 sm:gap-3">
+          {canSeeParticipants ? (
+            <button
+              type="button"
+              onClick={() => navigate("/participants")}
+              className="bg-white/15 hover:bg-white/25 text-white border border-white/30 transition-colors px-3 py-1.5 sm:px-4 sm:py-2 rounded-md text-sm font-semibold"
+            >
+              Participants
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => performLogout(navigate)}
+            className="bg-white/15 hover:bg-white/25 text-white border border-white/30 transition-colors px-3 py-1.5 sm:px-4 sm:py-2 rounded-md text-sm font-semibold"
+          >
+            Log Out
+          </button>
+        </nav>
       </div>
     </header>
   );
