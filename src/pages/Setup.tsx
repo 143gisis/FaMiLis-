@@ -63,6 +63,13 @@ const DEFAULT_CONSENT: ConsentState = {
   dataStorage: false,
 };
 
+type ParticipantPrefill = {
+  participantId?: number;
+  testerLabel?: string;
+  age?: number | null;
+  gender?: string | null;
+};
+
 export default function Setup() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -72,11 +79,22 @@ export default function Setup() {
   const [foodsLoading, setFoodsLoading] = useState(true);
   const [foodsError, setFoodsError] = useState<string | null>(null);
 
+  // Participant detail's "Start new session" CTA hands off via location.state so
+  // staff don't have to retype demographics; those fields are then locked read-only.
+  const participantPrefill = useMemo(() => {
+    const state = location.state as ParticipantPrefill | null;
+    if (!state?.testerLabel) return null;
+    return state;
+  }, [location.state]);
+  const isParticipantLocked = participantPrefill != null;
+
   const [selectedFoodId, setSelectedFoodId] = useState<number | "">("");
   const [participants, setParticipants] = useState<Participant[]>([]);
-  const [participantLabel, setParticipantLabel] = useState("");
-  const [participantAge, setParticipantAge] = useState("");
-  const [participantGender, setParticipantGender] = useState("");
+  const [participantLabel, setParticipantLabel] = useState(participantPrefill?.testerLabel ?? "");
+  const [participantAge, setParticipantAge] = useState(
+    participantPrefill?.age != null ? String(participantPrefill.age) : ""
+  );
+  const [participantGender, setParticipantGender] = useState(participantPrefill?.gender ?? "");
   const [participantError, setParticipantError] = useState<string | null>(null);
   const [consent, setConsent] = useState<ConsentState>(DEFAULT_CONSENT);
 
@@ -419,16 +437,24 @@ export default function Setup() {
 
               {/* Participant */}
               <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                <label className="block text-sm text-gray-700 mb-2 font-semibold">
-                  Participant Label / ID <span className="text-[#e8174a]">*</span>
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm text-gray-700 font-semibold">
+                    Participant Label / ID <span className="text-[#e8174a]">*</span>
+                  </label>
+                  {isParticipantLocked ? (
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#fde8ed] text-[#c9143f]">
+                      From participant profile
+                    </span>
+                  ) : null}
+                </div>
                 <input
                   type="text"
                   list="participant-labels"
                   value={participantLabel}
                   onChange={(e) => setParticipantLabel(e.target.value)}
                   placeholder="e.g. T-01"
-                  className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white"
+                  disabled={isParticipantLocked}
+                  className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white disabled:bg-gray-50 disabled:text-gray-600"
                 />
                 <datalist id="participant-labels">
                   {participants
@@ -438,8 +464,9 @@ export default function Setup() {
                     ))}
                 </datalist>
                 <p className="text-[11px] text-gray-500 mt-2">
-                  Enter an existing label to reuse a participant, or a new one to create it.
-                  Matching participants auto-fill age/gender.
+                  {isParticipantLocked
+                    ? "Demographics are locked to keep this participant's history consistent."
+                    : "Enter an existing label to reuse a participant, or a new one to create it. Matching participants auto-fill age/gender."}
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
                   <input
@@ -449,12 +476,14 @@ export default function Setup() {
                     placeholder="Age (optional)"
                     min={0}
                     max={120}
-                    className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white"
+                    disabled={isParticipantLocked}
+                    className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white disabled:bg-gray-50 disabled:text-gray-600"
                   />
                   <select
                     value={participantGender}
                     onChange={(e) => setParticipantGender(e.target.value)}
-                    className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white"
+                    disabled={isParticipantLocked}
+                    className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white disabled:bg-gray-50 disabled:text-gray-600"
                   >
                     <option value="">Gender (optional)</option>
                     <option value="male">Male</option>
