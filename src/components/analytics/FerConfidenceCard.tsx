@@ -1,4 +1,5 @@
 import { confidenceToTier, confidenceTooltip } from "../../lib/confidence";
+import { InfoTip } from "../InfoTip";
 
 export function FerConfidenceCard({ meanConfidence }: { meanConfidence: number }) {
   const tier = confidenceToTier(meanConfidence);
@@ -6,7 +7,10 @@ export function FerConfidenceCard({ meanConfidence }: { meanConfidence: number }
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 p-4 md:p-6 lg:px-10 lg:py-8 shadow-sm min-h-[160px] lg:min-h-[200px] h-full flex flex-col justify-center">
-      <p className="text-xs md:text-sm text-gray-500 font-semibold">Mean FER Confidence Level</p>
+      <p className="text-s md:text-sm text-gray-500 font-semibold flex items-center gap-1.5">
+        Mean FER Confidence Level
+        <InfoTip term="confidenceScore" align="left" />
+      </p>
       <div className="flex items-end gap-2 mt-2 md:mt-3">
         <p className="text-[clamp(2.5rem,6vw,4rem)] leading-none font-bold text-gray-900">{pct}%</p>
         <span
