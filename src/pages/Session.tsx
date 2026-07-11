@@ -690,15 +690,18 @@ export default function Session() {
       : "Data collection paused — no frames are being captured.";
 
   return (
-    <div className="min-h-screen bg-[#f6f7fb]" style={{ fontFamily: "'Montserrat', sans-serif" }}>
-      <PageHeader onLogoClick={handleBackToDashboard} />
-
+    <PageHeader
+      variant="collapsed"
+      onLogoClick={handleBackToDashboard}
+      backLabel="Back to Dashboard"
+      onBack={handleBackToDashboard}
+    >
       <main className="px-6 py-8">
         <div className="max-w-7xl mx-auto">
           <PageTitle
             title="Camera Recording"
             subtitle={food ? `${food.name} · ${food.category}` : "Session"}
-            onBack={handleBackToDashboard}
+            hideBack
           />
 
           {/* Pause banner — full width, above grid */}
@@ -1008,6 +1011,6 @@ export default function Session() {
           </div>
         </div>
       ) : null}
-    </div>
+    </PageHeader>
   );
 }
