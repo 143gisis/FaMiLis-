@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useLocation, useNavigate } from "react-router-dom";
 import { PageHeader, PageTitle } from "../components/PageHeader";
 import { apiFetch } from "../lib/api";
+import { InfoTip } from "../components/InfoTip";
 import { confidenceToTier, confidenceTooltip } from "../lib/confidence";
 import { hedonicLabel } from "../lib/ratingLabels";
 import {
@@ -752,7 +753,10 @@ export default function Session() {
                 {/* FER panel */}
                 <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                   <div className="flex items-center justify-between mb-3">
-                    <p className="text-xs text-gray-700 font-bold">Live Emotion (FER)</p>
+                    <p className="text-xs text-gray-700 font-bold inline-flex items-center gap-1.5">
+                      Live Emotion (FER)
+                      <InfoTip term="fer" align="left" />
+                    </p>
                     {emotionServiceOk === false && (
                       <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full font-semibold">
                         Service offline
@@ -776,7 +780,10 @@ export default function Session() {
                     {/* Hedonic metric card */}
                     <div className="bg-gray-50 rounded-lg border border-gray-100 px-3 py-2.5">
                       <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-[11px] text-gray-500 font-semibold">Hedonic Score</span>
+                        <span className="text-[11px] text-gray-500 font-semibold inline-flex items-center gap-1">
+                          Hedonic Score
+                          <InfoTip term="hedonicScore" align="left" />
+                        </span>
                           <span className="text-sm font-bold text-gray-900">
                             {hedonicDisplay == null ? "—" : `${hedonicDisplay} / 9`}
                           </span>
@@ -795,7 +802,10 @@ export default function Session() {
                     {/* Confidence metric card */}
                     <div className="bg-gray-50 rounded-lg border border-gray-100 px-3 py-2.5">
                       <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-[11px] text-gray-500 font-semibold">Confidence</span>
+                        <span className="text-[11px] text-gray-500 font-semibold inline-flex items-center gap-1">
+                          Confidence
+                          <InfoTip term="confidenceScore" align="left" />
+                        </span>
                         <div className="flex items-center gap-1.5">
                           {confidenceTier && (
                             <span
@@ -823,7 +833,10 @@ export default function Session() {
 
                     {/* Sentiment */}
                     <div className="flex items-center justify-between px-1">
-                      <span className="text-[11px] text-gray-500 font-semibold">Sentiment</span>
+                      <span className="text-[11px] text-gray-500 font-semibold inline-flex items-center gap-1">
+                        Sentiment
+                        <InfoTip term="sentiment" align="left" />
+                      </span>
                       <SentimentChip sentiment={liveSentiment} />
                     </div>
 
