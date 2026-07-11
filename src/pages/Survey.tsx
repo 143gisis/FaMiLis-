@@ -271,9 +271,7 @@ export default function Survey() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f6f7fb]" style={{ fontFamily: "'Montserrat', sans-serif" }}>
-      <PageHeader />
-
+    <PageHeader variant="collapsed">
       {saved && postSubmitPhase === "none" && (
         <div className="fixed top-4 right-4 z-50 bg-green-600 text-white px-5 py-3 rounded-lg shadow-lg text-sm font-semibold flex items-center gap-2">
           <span aria-hidden="true">✓</span>
@@ -426,7 +424,7 @@ export default function Survey() {
           onConfirm={(pickedFood) => void handleConfirmDifferentProduct(pickedFood)}
         />
       ) : null}
-    </div>
+    </PageHeader>
   );
 }
 
