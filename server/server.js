@@ -167,6 +167,59 @@ async function start() {
     return Number.isNaN(d.getTime()) ? null : d.toISOString();
   }
 
+  function mapFrameLogRow(r) {
+    return {
+      frameLogId: Number(r.frame_log_id),
+      timestamp: toIsoOrNull(r.timestamp),
+      faceDetected: r.face_detected == null ? null : Boolean(r.face_detected),
+      confidenceScore: r.confidence_score == null ? null : Number(r.confidence_score),
+      hedonicScore: r.hedonic_score == null ? null : Number(r.hedonic_score),
+      frameImageUrl: r.frame_image_url == null ? null : String(r.frame_image_url),
+    };
+  }
+
+  async function getSessionFrameMetrics(sessionId) {
+    const [[row]] = await pool.query(
+      `
+      SELECT
+        COUNT(*) AS total_frames,
+        AVG(confidence_score) AS mean_confidence,
+        AVG(hedonic_score) AS mean_hedonic
+      FROM frame_logs
+      WHERE session_id = ?
+      `,
+      [sessionId]
+    );
+    return {
+      totalFrames: Number(row?.total_frames ?? 0),
+      meanConfidence: row?.mean_confidence == null ? null : Number(row.mean_confidence),
+      meanHedonic: row?.mean_hedonic == null ? null : Number(row.mean_hedonic),
+    };
+  }
+
+  function parseOptionalScore01(value, fieldName) {
+    if (value === null) return { ok: true, value: null };
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return { ok: false, error: `${fieldName} must be a number between 0 and 1, or null.` };
+    }
+    if (value < 0 || value > 1) {
+      return { ok: false, error: `${fieldName} must be between 0 and 1.` };
+    }
+    return { ok: true, value };
+  }
+
+  async function unlinkFrameImage(frameImageUrl) {
+    if (!frameImageUrl) return;
+    const url = String(frameImageUrl);
+    const rel = url.startsWith("/uploads/") ? url.slice("/uploads/".length) : null;
+    if (!rel) return;
+    try {
+      await unlink(path.join(uploadsRoot, rel));
+    } catch {
+      /* file may already be missing */
+    }
+  }
+
   // Resilient system log writer — failures never bubble up to the caller.
   async function writeSystemLog(p, { sessionId, logType, message }) {
     try {
@@ -2006,6 +2059,173 @@ async function start() {
     }
   );
 
+  // Manual QA: update face / confidence / hedonic on a single frame log
+  app.patch(
+    "/api/sessions/:sessionId/frames/:frameLogId",
+    requireRole("admin", "staff"),
+    async (req, res) => {
+      const sessionId = Number.parseInt(req.params.sessionId, 10);
+      const frameLogId = Number.parseInt(req.params.frameLogId, 10);
+      if (!Number.isFinite(sessionId)) {
+        return res.status(400).json({ ok: false, error: "Invalid sessionId." });
+      }
+      if (!Number.isFinite(frameLogId)) {
+        return res.status(400).json({ ok: false, error: "Invalid frameLogId." });
+      }
+
+      const body = req.body ?? {};
+      const hasFace = Object.prototype.hasOwnProperty.call(body, "faceDetected");
+      const hasConf = Object.prototype.hasOwnProperty.call(body, "confidenceScore");
+      const hasHedonic = Object.prototype.hasOwnProperty.call(body, "hedonicScore");
+      if (!hasFace && !hasConf && !hasHedonic) {
+        return res.status(400).json({
+          ok: false,
+          error: "Provide faceDetected, confidenceScore, and/or hedonicScore.",
+        });
+      }
+
+      let faceDetected;
+      if (hasFace) {
+        if (body.faceDetected !== null && typeof body.faceDetected !== "boolean") {
+          return res.status(400).json({ ok: false, error: "faceDetected must be a boolean or null." });
+        }
+        faceDetected = body.faceDetected;
+      }
+
+      let confidenceScore;
+      if (hasConf) {
+        const parsed = parseOptionalScore01(body.confidenceScore, "confidenceScore");
+        if (!parsed.ok) return res.status(400).json({ ok: false, error: parsed.error });
+        confidenceScore = parsed.value;
+      }
+
+      let hedonicScore;
+      if (hasHedonic) {
+        const parsed = parseOptionalScore01(body.hedonicScore, "hedonicScore");
+        if (!parsed.ok) return res.status(400).json({ ok: false, error: parsed.error });
+        hedonicScore = parsed.value;
+      }
+
+      try {
+        const [[existing]] = await pool.query(
+          `
+          SELECT
+            frame_log_id,
+            session_id,
+            timestamp,
+            face_detected,
+            confidence_score,
+            hedonic_score,
+            frame_image_url
+          FROM frame_logs
+          WHERE frame_log_id = ? AND session_id = ?
+          LIMIT 1
+          `,
+          [frameLogId, sessionId]
+        );
+        if (!existing) {
+          return res.status(404).json({ ok: false, error: "Frame not found for this session." });
+        }
+
+        const nextFace = hasFace ? faceDetected : existing.face_detected;
+        const nextConf = hasConf ? confidenceScore : existing.confidence_score;
+        const nextHedonic = hasHedonic ? hedonicScore : existing.hedonic_score;
+
+        await pool.query(
+          `
+          UPDATE frame_logs
+          SET face_detected = ?, confidence_score = ?, hedonic_score = ?
+          WHERE frame_log_id = ? AND session_id = ?
+          `,
+          [nextFace, nextConf, nextHedonic, frameLogId, sessionId]
+        );
+
+        const [[updated]] = await pool.query(
+          `
+          SELECT
+            frame_log_id,
+            timestamp,
+            face_detected,
+            confidence_score,
+            hedonic_score,
+            frame_image_url
+          FROM frame_logs
+          WHERE frame_log_id = ?
+          LIMIT 1
+          `,
+          [frameLogId]
+        );
+
+        const metrics = await getSessionFrameMetrics(sessionId);
+        const actor = req.user?.username || req.user?.id || "unknown";
+        void writeSystemLog(pool, {
+          sessionId,
+          logType: "info",
+          message: `Frame ${frameLogId} manually updated by ${actor}.`,
+        });
+
+        return res.json({
+          ok: true,
+          frame: mapFrameLogRow(updated),
+          metrics,
+        });
+      } catch (err) {
+        console.error("PATCH /api/sessions/:sessionId/frames/:frameLogId error:", err);
+        return res.status(500).json({ ok: false, error: "Server error." });
+      }
+    }
+  );
+
+  // Manual QA: delete a single frame log and its image file
+  app.delete(
+    "/api/sessions/:sessionId/frames/:frameLogId",
+    requireRole("admin", "staff"),
+    async (req, res) => {
+      const sessionId = Number.parseInt(req.params.sessionId, 10);
+      const frameLogId = Number.parseInt(req.params.frameLogId, 10);
+      if (!Number.isFinite(sessionId)) {
+        return res.status(400).json({ ok: false, error: "Invalid sessionId." });
+      }
+      if (!Number.isFinite(frameLogId)) {
+        return res.status(400).json({ ok: false, error: "Invalid frameLogId." });
+      }
+
+      try {
+        const [[existing]] = await pool.query(
+          `
+          SELECT frame_log_id, frame_image_url
+          FROM frame_logs
+          WHERE frame_log_id = ? AND session_id = ?
+          LIMIT 1
+          `,
+          [frameLogId, sessionId]
+        );
+        if (!existing) {
+          return res.status(404).json({ ok: false, error: "Frame not found for this session." });
+        }
+
+        await pool.query(
+          `DELETE FROM frame_logs WHERE frame_log_id = ? AND session_id = ?`,
+          [frameLogId, sessionId]
+        );
+        await unlinkFrameImage(existing.frame_image_url);
+
+        const metrics = await getSessionFrameMetrics(sessionId);
+        const actor = req.user?.username || req.user?.id || "unknown";
+        void writeSystemLog(pool, {
+          sessionId,
+          logType: "info",
+          message: `Frame ${frameLogId} manually deleted by ${actor}.`,
+        });
+
+        return res.json({ ok: true, metrics });
+      } catch (err) {
+        console.error("DELETE /api/sessions/:sessionId/frames/:frameLogId error:", err);
+        return res.status(500).json({ ok: false, error: "Server error." });
+      }
+    }
+  );
+
   // Full session detail for the results page (frame logs, system logs, survey results)
   app.get("/api/sessions/:sessionId/details", async (req, res) => {
     const sessionId = Number.parseInt(req.params.sessionId, 10);
@@ -2056,6 +2276,7 @@ async function start() {
       const [frameRows] = await pool.query(
         `
         SELECT
+          frame_log_id,
           timestamp,
           face_detected,
           confidence_score,
@@ -2142,13 +2363,7 @@ async function start() {
           // hedonic_score is stored 0..1 in frame_logs; convert to 0..1, then the frontend scales to /10.
           meanHedonic: frameStatsRow?.mean_hedonic == null ? null : Number(frameStatsRow.mean_hedonic),
         },
-        frameLogs: (frameRows ?? []).map((r) => ({
-          timestamp: toIsoOrNull(r.timestamp),
-          faceDetected: r.face_detected == null ? null : Boolean(r.face_detected),
-          confidenceScore: r.confidence_score == null ? null : Number(r.confidence_score),
-          hedonicScore: r.hedonic_score == null ? null : Number(r.hedonic_score),
-          frameImageUrl: r.frame_image_url == null ? null : String(r.frame_image_url),
-        })),
+        frameLogs: (frameRows ?? []).map((r) => mapFrameLogRow(r)),
         systemLogs: (systemRows ?? []).map((r) => ({
           logType: r.log_type,
           message: String(r.message ?? ""),

@@ -19,9 +19,12 @@ import { hedonicColor } from "../lib/ratingLabels";
 import { ATTRIBUTE_COLORS } from "../lib/attributeColors";
 import { confidenceToTier } from "../lib/confidence";
 import {
+  FrameDeleteDialog,
+  FrameEditModal,
   FrameFolderAccordion,
   FrameGroupToolbar,
   useFrameGroups,
+  type FrameEditValues,
   type FrameGroupBy,
   type FrameViewMode,
   type IndexedFrameLog,
@@ -50,6 +53,7 @@ type Food = {
 };
 
 type FrameLog = {
+  frameLogId: number;
   timestamp: string | null;
   faceDetected: boolean | null;
   confidenceScore: number | null; // 0..1
@@ -184,6 +188,12 @@ export default function SessionDetail() {
   const [frameGroupBy, setFrameGroupBy] = useState<FrameGroupBy>("time");
   const [frameFaceOnly, setFrameFaceOnly] = useState(false);
   const [frameLowConfidenceOnly, setFrameLowConfidenceOnly] = useState(false);
+  const [editingFrame, setEditingFrame] = useState<IndexedFrameLog | null>(null);
+  const [frameEditSaving, setFrameEditSaving] = useState(false);
+  const [frameEditError, setFrameEditError] = useState<string | null>(null);
+  const [deletingFrame, setDeletingFrame] = useState<IndexedFrameLog | null>(null);
+  const [frameDeletePending, setFrameDeletePending] = useState(false);
+  const [frameDeleteError, setFrameDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (sessionId == null) return;
@@ -419,6 +429,99 @@ export default function SessionDetail() {
     }
   };
 
+  const applyFrameMetrics = (
+    prev: SessionDetailPayload,
+    metrics: SessionDetailPayload["metrics"]
+  ): SessionDetailPayload => ({
+    ...prev,
+    metrics: {
+      totalFrames: Number(metrics.totalFrames ?? 0),
+      meanConfidence: metrics.meanConfidence == null ? null : Number(metrics.meanConfidence),
+      meanHedonic: metrics.meanHedonic == null ? null : Number(metrics.meanHedonic),
+    },
+  });
+
+  const onSaveFrameEdit = async (values: FrameEditValues) => {
+    if (!content || !editingFrame) return;
+    setFrameEditSaving(true);
+    setFrameEditError(null);
+    try {
+      const res = await apiFetch(
+        `/api/sessions/${content.session.id}/frames/${editingFrame.frameLogId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(values),
+        }
+      );
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok || !json?.frame || !json?.metrics) {
+        throw new Error(json?.error || "Failed to update frame.");
+      }
+      const updated = json.frame as FrameLog;
+      setData((prev) => {
+        if (!prev) return prev;
+        const next = applyFrameMetrics(prev, json.metrics);
+        return {
+          ...next,
+          frameLogs: prev.frameLogs.map((f) =>
+            f.frameLogId === updated.frameLogId ? { ...f, ...updated } : f
+          ),
+          systemLogs: [
+            ...prev.systemLogs,
+            {
+              logType: "info" as const,
+              message: `Frame ${updated.frameLogId} manually updated.`,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        };
+      });
+      setEditingFrame(null);
+    } catch (err: any) {
+      setFrameEditError(err?.message || "Failed to update frame.");
+    } finally {
+      setFrameEditSaving(false);
+    }
+  };
+
+  const onConfirmFrameDelete = async () => {
+    if (!content || !deletingFrame) return;
+    setFrameDeletePending(true);
+    setFrameDeleteError(null);
+    try {
+      const frameLogId = deletingFrame.frameLogId;
+      const res = await apiFetch(`/api/sessions/${content.session.id}/frames/${frameLogId}`, {
+        method: "DELETE",
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok || !json?.metrics) {
+        throw new Error(json?.error || "Failed to delete frame.");
+      }
+      setData((prev) => {
+        if (!prev) return prev;
+        const next = applyFrameMetrics(prev, json.metrics);
+        return {
+          ...next,
+          frameLogs: prev.frameLogs.filter((f) => f.frameLogId !== frameLogId),
+          systemLogs: [
+            ...prev.systemLogs,
+            {
+              logType: "info" as const,
+              message: `Frame ${frameLogId} manually deleted.`,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        };
+      });
+      setDeletingFrame(null);
+    } catch (err: any) {
+      setFrameDeleteError(err?.message || "Failed to delete frame.");
+    } finally {
+      setFrameDeletePending(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#f6f7fb]" style={{ fontFamily: "'Montserrat', sans-serif" }}>
       <PageHeader />
@@ -615,6 +718,14 @@ export default function SessionDetail() {
                                 label: formatDateTime(f.timestamp),
                               })
                             }
+                            onEdit={(f) => {
+                              setFrameEditError(null);
+                              setEditingFrame(f);
+                            }}
+                            onDelete={(f) => {
+                              setFrameDeleteError(null);
+                              setDeletingFrame(f);
+                            }}
                           />
                         ) : filteredFrameLogs.length === 0 ? (
                           <div className="text-[12px] text-gray-500 py-8 text-center bg-gray-50 rounded-lg border border-gray-100">
@@ -622,14 +733,15 @@ export default function SessionDetail() {
                           </div>
                         ) : (
                         <div className="overflow-x-auto">
-                          <table className="min-w-[720px] w-full text-left">
+                          <table className="min-w-[820px] w-full text-left">
                           <thead>
                             <tr className="text-xs text-gray-500 bg-gray-50">
-                              <th className="px-3 py-3 font-semibold">Timestamp</th>
-                              <th className="px-3 py-3 font-semibold">Face Detected</th>
-                              <th className="px-3 py-3 font-semibold">Confidence Score</th>
-                              <th className="px-3 py-3 font-semibold">Hedonic Score</th>
+                              <th className="px-2 py-3 font-semibold">Timestamp</th>
+                              <th className="px-1 py-3 font-semibold">Face Detected</th>
+                              <th className="px-6 py-3 font-semibold">Confidence Score</th>
+                              <th className="px-1 py-3 font-semibold">Hedonic Score</th>
                               <th className="px-3 py-3 font-semibold">Frame Image</th>
+                              <th className="px-3 py-3 font-semibold">Actions</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -638,7 +750,7 @@ export default function SessionDetail() {
                               const hedonic =
                                 f.hedonicScore == null ? null : Number((f.hedonicScore * 8 + 1).toFixed(1));
                               return (
-                                <tr key={f.index} className="border-t border-gray-100">
+                                <tr key={f.frameLogId} className="border-t border-gray-100">
                                   <td className="px-3 py-3 text-xs text-gray-700">
                                     {formatDateTime(f.timestamp)}
                                   </td>
@@ -689,12 +801,36 @@ export default function SessionDetail() {
                                         <img
                                           src={toApiUrl(f.frameImageUrl) ?? undefined}
                                           alt={`Frame at ${formatDateTime(f.timestamp)}`}
-                                          className="w-12 h-12 rounded-md border border-gray-200 object-cover group-hover:opacity-90"
+                                          className="w-24 h-24 rounded-md border border-gray-200 object-cover group-hover:opacity-90"
                                         />
                                       </button>
                                     ) : (
                                       <span className="text-gray-400">-</span>
                                     )}
+                                  </td>
+                                  <td className="px-3 py-3 text-xs text-gray-700">
+                                    <div className="flex items-center gap-2 whitespace-nowrap">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setFrameEditError(null);
+                                          setEditingFrame(f);
+                                        }}
+                                        className="text-[#e8174a] hover:underline font-semibold"
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setFrameDeleteError(null);
+                                          setDeletingFrame(f);
+                                        }}
+                                        className="text-red-600 hover:underline font-semibold"
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
                                   </td>
                                 </tr>
                               );
@@ -774,6 +910,33 @@ export default function SessionDetail() {
             <img src={previewImage.url} alt="Frame preview" className="w-full max-h-[70vh] object-contain rounded-lg" />
           </div>
         </div>
+      ) : null}
+      {editingFrame ? (
+        <FrameEditModal
+          frame={editingFrame}
+          saving={frameEditSaving}
+          error={frameEditError}
+          onClose={() => {
+            if (frameEditSaving) return;
+            setEditingFrame(null);
+            setFrameEditError(null);
+          }}
+          onSubmit={onSaveFrameEdit}
+        />
+      ) : null}
+      {deletingFrame ? (
+        <FrameDeleteDialog
+          frameLogId={deletingFrame.frameLogId}
+          timestampLabel={formatDateTime(deletingFrame.timestamp)}
+          pending={frameDeletePending}
+          error={frameDeleteError}
+          onClose={() => {
+            if (frameDeletePending) return;
+            setDeletingFrame(null);
+            setFrameDeleteError(null);
+          }}
+          onConfirm={onConfirmFrameDelete}
+        />
       ) : null}
       {deleteOpen && content ? (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">

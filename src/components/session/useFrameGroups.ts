@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 
 export type SessionFrameLog = {
+  frameLogId: number;
   timestamp: string | null;
   faceDetected: boolean | null;
   confidenceScore: number | null; // 0..1

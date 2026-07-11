@@ -15,11 +15,15 @@ export function FrameGalleryGrid({
   pageSize = 20,
   toApiUrl,
   onPreview,
+  onEdit,
+  onDelete,
 }: {
   frames: IndexedFrameLog[];
   pageSize?: number;
   toApiUrl: (url: string | null | undefined) => string | null;
   onPreview: (frame: IndexedFrameLog) => void;
+  onEdit?: (frame: IndexedFrameLog) => void;
+  onDelete?: (frame: IndexedFrameLog) => void;
 }) {
   const [page, setPage] = useState(0);
 
@@ -36,38 +40,61 @@ export function FrameGalleryGrid({
         {pageFrames.map((f) => {
           const hedonic = f.hedonicScore == null ? null : f.hedonicScore * 8 + 1;
           return (
-            <button
-              key={f.index}
-              type="button"
-              onClick={() => onPreview(f)}
-              className="relative group rounded-md overflow-hidden border border-gray-200 aspect-square bg-gray-100"
-              title={formatTime(f.timestamp)}
-            >
-              {f.frameImageUrl ? (
-                <img
-                  src={toApiUrl(f.frameImageUrl) ?? undefined}
-                  alt={`Frame at ${formatTime(f.timestamp)}`}
-                  className="w-full h-full object-cover group-hover:opacity-90"
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-gray-400 text-[10px]">
-                  No image
+            <div key={f.frameLogId} className="space-y-1">
+              <button
+                type="button"
+                onClick={() => onPreview(f)}
+                className="relative group rounded-md overflow-hidden border border-gray-200 aspect-square bg-gray-100 w-full"
+                title={formatTime(f.timestamp)}
+              >
+                {f.frameImageUrl ? (
+                  <img
+                    src={toApiUrl(f.frameImageUrl) ?? undefined}
+                    alt={`Frame at ${formatTime(f.timestamp)}`}
+                    className="w-full h-full object-cover group-hover:opacity-90"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-gray-400 text-[10px]">
+                    No image
+                  </div>
+                )}
+                {hedonic != null ? (
+                  <span
+                    className="absolute bottom-0.5 right-0.5 text-[9px] font-bold px-1 rounded text-white"
+                    style={{ backgroundColor: hedonicColor(hedonic) }}
+                  >
+                    {hedonic.toFixed(1)}
+                  </span>
+                ) : null}
+                {f.faceDetected === false ? (
+                  <span className="absolute top-0.5 left-0.5 text-[9px] font-bold px-1 rounded bg-red-500/90 text-white">
+                    No face
+                  </span>
+                ) : null}
+              </button>
+              {onEdit || onDelete ? (
+                <div className="flex items-center justify-center gap-2 text-[10px]">
+                  {onEdit ? (
+                    <button
+                      type="button"
+                      onClick={() => onEdit(f)}
+                      className="text-[#e8174a] hover:underline font-semibold"
+                    >
+                      Edit
+                    </button>
+                  ) : null}
+                  {onDelete ? (
+                    <button
+                      type="button"
+                      onClick={() => onDelete(f)}
+                      className="text-red-600 hover:underline font-semibold"
+                    >
+                      Delete
+                    </button>
+                  ) : null}
                 </div>
-              )}
-              {hedonic != null ? (
-                <span
-                  className="absolute bottom-0.5 right-0.5 text-[9px] font-bold px-1 rounded text-white"
-                  style={{ backgroundColor: hedonicColor(hedonic) }}
-                >
-                  {hedonic.toFixed(1)}
-                </span>
               ) : null}
-              {f.faceDetected === false ? (
-                <span className="absolute top-0.5 left-0.5 text-[9px] font-bold px-1 rounded bg-red-500/90 text-white">
-                  No face
-                </span>
-              ) : null}
-            </button>
+            </div>
           );
         })}
       </div>

@@ -7,10 +7,14 @@ export function FrameFolderAccordion({
   groups,
   toApiUrl,
   onPreview,
+  onEdit,
+  onDelete,
 }: {
   groups: FrameGroup[];
   toApiUrl: (url: string | null | undefined) => string | null;
   onPreview: (frame: IndexedFrameLog) => void;
+  onEdit?: (frame: IndexedFrameLog) => void;
+  onDelete?: (frame: IndexedFrameLog) => void;
 }) {
   const [openKey, setOpenKey] = useState<string | null>(groups[0]?.key ?? null);
 
@@ -48,20 +52,26 @@ export function FrameFolderAccordion({
                 {thumbFrames.map((f) =>
                   f.frameImageUrl ? (
                     <img
-                      key={f.index}
+                      key={f.frameLogId}
                       src={toApiUrl(f.frameImageUrl) ?? undefined}
                       alt=""
                       className="w-8 h-8 rounded-md border-2 border-white object-cover"
                     />
                   ) : (
-                    <div key={f.index} className="w-8 h-8 rounded-md border-2 border-white bg-gray-100" />
+                    <div key={f.frameLogId} className="w-8 h-8 rounded-md border-2 border-white bg-gray-100" />
                   )
                 )}
               </div>
             </button>
             {isOpen ? (
               <div className="border-t border-gray-100 p-4">
-                <FrameGalleryGrid frames={group.frames} toApiUrl={toApiUrl} onPreview={onPreview} />
+                <FrameGalleryGrid
+                  frames={group.frames}
+                  toApiUrl={toApiUrl}
+                  onPreview={onPreview}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                />
               </div>
             ) : null}
           </div>
