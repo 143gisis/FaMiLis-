@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_BASE, apiFetch } from "../lib/api";
+import { getStoredRole, isAdminRole } from "../RequireAuth";
 import { PageHeader } from "../components/PageHeader";
+import { ExportButton } from "../components/ExportButton";
 import { FoodCard } from "../components/dashboard";
 import {
   ColoredRatingBar,
@@ -10,6 +12,7 @@ import {
   InsightCard,
   MetricCard,
   SectionPill,
+  SessionTrendChart,
   TabButton,
 } from "../components/analytics";
 import { RATING_LABELS, hedonicColor } from "../lib/ratingLabels";
@@ -51,6 +54,27 @@ type Food = {
   avgDurationMin: number | null;
 };
 
+type AspectStat = { mean: number; stdDev: number; n: number };
+
+type AspectStats = {
+  color: AspectStat;
+  flavorAroma: AspectStat;
+  saltSweet: AspectStat;
+  texture: AspectStat;
+  overall: AspectStat;
+};
+
+type SessionTrendPoint = {
+  sessionId: number;
+  sessionDate: string | null;
+  overallRating: number | null;
+  color: number | null;
+  flavorAroma: number | null;
+  saltSweet: number | null;
+  texture: number | null;
+  meanFerHedonic: number | null;
+};
+
 type Analytics = {
   meanConfidence: number;
   meanHedonic: number;
@@ -63,6 +87,57 @@ type Analytics = {
   sessionCount: number;
   frameLogCount: number;
   surveyCount: number;
+  aspectStats: AspectStats;
+  sessionTrends: SessionTrendPoint[];
+};
+
+const EMPTY_ASPECT_STAT: AspectStat = { mean: 0, stdDev: 0, n: 0 };
+
+const EMPTY_ASPECT_STATS: AspectStats = {
+  color: EMPTY_ASPECT_STAT,
+  flavorAroma: EMPTY_ASPECT_STAT,
+  saltSweet: EMPTY_ASPECT_STAT,
+  texture: EMPTY_ASPECT_STAT,
+  overall: EMPTY_ASPECT_STAT,
+};
+
+/** Maps radar/bar labels to their aspectStats key for N / stdDev lookups. */
+const ASPECT_KEY_BY_LABEL: Record<string, keyof AspectStats> = {
+  Color: "color",
+  "Flavor/Aroma": "flavorAroma",
+  "Salt/Sweet": "saltSweet",
+  Texture: "texture",
+  Overall: "overall",
+};
+
+const EMPTY_ANALYTICS: Analytics = {
+  meanConfidence: 0,
+  meanHedonic: 0,
+  distribution: [
+    { label: "Positive (7-9)", value: 0, color: "#22c55e" },
+    { label: "Neutral (5-6)", value: 0, color: "#eab308" },
+    { label: "Negative (1-4)", value: 0, color: "#ef4444" },
+  ],
+  radar: [
+    { label: "Color", score: 0 },
+    { label: "Flavor/Aroma", score: 0 },
+    { label: "Salt/Sweet", score: 0 },
+    { label: "Texture", score: 0 },
+    { label: "Overall", score: 0 },
+  ],
+  timeline: [
+    { label: "First taste", score: 0, sub: "Early" },
+    { label: "Mid", score: 0, sub: "Middle" },
+    { label: "Aftertaste", score: 0, sub: "Late" },
+  ],
+  byAge: [],
+  byGender: [],
+  sampleSize: 0,
+  sessionCount: 0,
+  frameLogCount: 0,
+  surveyCount: 0,
+  aspectStats: EMPTY_ASPECT_STATS,
+  sessionTrends: [],
 };
 
 const toApiUrl = (url: string | null) => {
@@ -80,6 +155,7 @@ function formatDate(iso: string | null) {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const canExport = isAdminRole(getStoredRole());
 
   const [tab, setTab] = useState<TabKey>("food");
   const [foods, setFoods] = useState<Food[]>([]);
@@ -366,64 +442,8 @@ export default function Dashboard() {
   }, [tab, selectedFood, analyticsByFoodId, analyticsLoading]);
 
   const stats = useMemo(() => {
-    if (!selectedFood) {
-      return {
-        meanConfidence: 0,
-        meanHedonic: 0,
-        distribution: [
-          { label: "Positive (7-9)", value: 0, color: "#22c55e" },
-          { label: "Neutral (5-6)", value: 0, color: "#eab308" },
-          { label: "Negative (1-4)", value: 0, color: "#ef4444" },
-        ],
-        radar: [
-          { label: "Color", score: 0 },
-          { label: "Flavor/Aroma", score: 0 },
-          { label: "Salt/Sweet", score: 0 },
-          { label: "Texture", score: 0 },
-          { label: "Overall", score: 0 },
-        ],
-        timeline: [
-          { label: "First taste", score: 0, sub: "Early" },
-          { label: "Mid", score: 0, sub: "Middle" },
-          { label: "Aftertaste", score: 0, sub: "Late" },
-        ],
-        byAge: [],
-        byGender: [],
-        sampleSize: 0,
-        sessionCount: 0,
-        frameLogCount: 0,
-        surveyCount: 0,
-      };
-    }
-    return (
-      analyticsByFoodId[selectedFood.id] ?? {
-        meanConfidence: 0,
-        meanHedonic: 0,
-        distribution: [
-          { label: "Positive (7-9)", value: 0, color: "#22c55e" },
-          { label: "Neutral (5-6)", value: 0, color: "#eab308" },
-          { label: "Negative (1-4)", value: 0, color: "#ef4444" },
-        ],
-        radar: [
-          { label: "Color", score: 0 },
-          { label: "Flavor/Aroma", score: 0 },
-          { label: "Salt/Sweet", score: 0 },
-          { label: "Texture", score: 0 },
-          { label: "Overall", score: 0 },
-        ],
-        timeline: [
-          { label: "First taste", score: 0, sub: "Early" },
-          { label: "Mid", score: 0, sub: "Middle" },
-          { label: "Aftertaste", score: 0, sub: "Late" },
-        ],
-        byAge: [],
-        byGender: [],
-        sampleSize: 0,
-        sessionCount: 0,
-        frameLogCount: 0,
-        surveyCount: 0,
-      }
-    );
+    if (!selectedFood) return EMPTY_ANALYTICS;
+    return analyticsByFoodId[selectedFood.id] ?? EMPTY_ANALYTICS;
   }, [selectedFood, analyticsByFoodId]);
 
   const analyticsIssues = useMemo(() => {
@@ -783,20 +803,23 @@ export default function Dashboard() {
                     </p>
                   </div>
 
-                  {foods.length > 1 && (
-                    <select
-                      value={selectedFood?.id ?? ""}
-                      onChange={(e) => setExpandedFoodId(Number(e.target.value))}
-                      className="text-xs border border-gray-200 rounded-md px-3 py-2 bg-white"
-                      aria-label="Select food"
-                    >
-                      {foods.map((f) => (
-                        <option key={f.id} value={f.id}>
-                          {f.name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {foods.length > 1 && (
+                      <select
+                        value={selectedFood?.id ?? ""}
+                        onChange={(e) => setExpandedFoodId(Number(e.target.value))}
+                        className="text-xs border border-gray-200 rounded-md px-3 py-2 bg-white"
+                        aria-label="Select food"
+                      >
+                        {foods.map((f) => (
+                          <option key={f.id} value={f.id}>
+                            {f.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {selectedFood && canExport ? <ExportButton kind="food" foodId={selectedFood.id} /> : null}
+                  </div>
                 </div>
               </div>
 
@@ -826,7 +849,7 @@ export default function Dashboard() {
 
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[1fr_1.2fr] gap-4 mb-4">
                         <HeroHedonicCard
-                          score={stats.surveyCount > 0 ? stats.meanHedonic : null}
+                          score={stats.surveyCount > 0 ? stats.aspectStats.overall.mean : null}
                         />
                         <FerConfidenceCard meanConfidence={stats.meanConfidence} />
                       </div>
@@ -956,22 +979,36 @@ export default function Dashboard() {
                               </div>
                             </div>
                             <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
-                              {stats.radar.map((r) => (
-                                <ColoredRatingBar
-                                  key={r.label}
-                                  label={r.label}
-                                  rating={r.score}
-                                  color={ATTRIBUTE_COLORS[r.label] ?? "#e8174a"}
-                                />
-                              ))}
+                              {stats.radar.map((r) => {
+                                const aspectKey = ASPECT_KEY_BY_LABEL[r.label];
+                                const aspect = aspectKey ? stats.aspectStats[aspectKey] : undefined;
+                                return (
+                                  <ColoredRatingBar
+                                    key={r.label}
+                                    label={r.label}
+                                    rating={r.score}
+                                    color={ATTRIBUTE_COLORS[r.label] ?? "#e8174a"}
+                                    n={aspect?.n}
+                                    stdDev={aspect?.stdDev}
+                                  />
+                                );
+                              })}
                             </div>
                           </div>
                         </div>
 
                         <div>
-                          <SectionPill infoTerm="fer">FER Timeline (In-Session Reaction Phases)</SectionPill>
+                          <SectionPill>Session Trends (Over Time)</SectionPill>
                           <p className="text-s text-gray-500 -mt-1 mb-4">
-                            Emotion over time during testing — distinct from session-over-time trends
+                            How survey ratings change across testing sessions for this product
+                          </p>
+                          <SessionTrendChart sessionTrends={stats.sessionTrends} />
+                        </div>
+
+                        <div>
+                          <SectionPill infoTerm="fer">FER Timeline (In-Session Reactions)</SectionPill>
+                          <p className="text-s text-gray-500 -mt-1 mb-4">
+                            Average hedonics over time over a single testing session — distinct from session-over-time trends above
                           </p>
                           <div className="bg-gray-50 rounded-lg border border-gray-100 p-4">
                             <p className="text-xs text-gray-600 font-semibold mb-2">

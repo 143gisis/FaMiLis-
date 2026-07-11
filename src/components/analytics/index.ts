@@ -7,3 +7,4 @@ export { ProfileCard } from "./ProfileCard";
 export { TabButton } from "./TabButton";
 export { HeroHedonicCard } from "./HeroHedonicCard";
 export { FerConfidenceCard } from "./FerConfidenceCard";
+export { SessionTrendChart } from "./SessionTrendChart";

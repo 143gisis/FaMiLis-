@@ -4,10 +4,16 @@ export function ColoredRatingBar({
   label,
   rating,
   color,
+  n,
+  stdDev,
 }: {
   label: string;
   rating: number | null;
   color: string;
+  /** Sample size backing this rating. Shown as a caption when provided. */
+  n?: number;
+  /** Standard deviation of the underlying survey scores. Shown alongside n when provided. */
+  stdDev?: number;
 }) {
   const val = rating ?? 0;
   const pct = clampPct((val / 9) * 100);
@@ -37,6 +43,12 @@ export function ColoredRatingBar({
           style={{ width: rating == null ? "0%" : `${pct}%`, backgroundColor: color }}
         />
       </div>
+      {n != null ? (
+        <p className="text-[11px] text-gray-400 mt-1 tabular-nums">
+          N={n}
+          {stdDev != null && n > 1 ? ` · σ ${stdDev.toFixed(1)}` : ""}
+        </p>
+      ) : null}
     </div>
   );
 }
