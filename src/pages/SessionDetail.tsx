@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { PageHeader } from "../components/PageHeader";
 import { InfoTip } from "../components/InfoTip";
+import { ExportButton } from "../components/ExportButton";
+import { getStoredRole, isAdminRole } from "../RequireAuth";
 import { SessionMultiSelect, type SessionOption } from "../components/dashboard";
 import {
   ColoredRatingBar,
@@ -16,6 +18,14 @@ import { API_BASE, apiFetch } from "../lib/api";
 import { hedonicColor } from "../lib/ratingLabels";
 import { ATTRIBUTE_COLORS } from "../lib/attributeColors";
 import { confidenceToTier } from "../lib/confidence";
+import {
+  FrameFolderAccordion,
+  FrameGroupToolbar,
+  useFrameGroups,
+  type FrameGroupBy,
+  type FrameViewMode,
+  type IndexedFrameLog,
+} from "../components/session";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -122,6 +132,8 @@ function formatDateTime(iso: string | null) {
   return d.toLocaleString();
 }
 
+const MAX_CHART_POINTS = 50;
+
 function toApiUrl(url: string | null | undefined) {
   if (!url) return null;
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
@@ -131,6 +143,7 @@ function toApiUrl(url: string | null | undefined) {
 export default function SessionDetail() {
   const navigate = useNavigate();
   const location = useLocation();
+  const canExport = isAdminRole(getStoredRole());
 
   const storedCurrent = useMemo(() => {
     try {
@@ -167,6 +180,10 @@ export default function SessionDetail() {
   const [siblingSessions, setSiblingSessions] = useState<SessionOption[]>([]);
   const [siblingSessionsLoading, setSiblingSessionsLoading] = useState(false);
   const [selectedSessionIds, setSelectedSessionIds] = useState<number[]>([]);
+  const [frameViewMode, setFrameViewMode] = useState<FrameViewMode>("list");
+  const [frameGroupBy, setFrameGroupBy] = useState<FrameGroupBy>("time");
+  const [frameFaceOnly, setFrameFaceOnly] = useState(false);
+  const [frameLowConfidenceOnly, setFrameLowConfidenceOnly] = useState(false);
 
   useEffect(() => {
     if (sessionId == null) return;
@@ -247,17 +264,44 @@ export default function SessionDetail() {
     content?.metrics.meanConfidence == null ? null : Math.round(content.metrics.meanConfidence * 100);
   const meanHedonicOutOf9 =
     content?.metrics.meanHedonic == null ? null : content.metrics.meanHedonic * 8 + 1;
+
+  const indexedFrameLogs = useMemo<IndexedFrameLog[]>(
+    () => (content?.frameLogs ?? []).map((f, index) => ({ ...f, index })),
+    [content?.frameLogs]
+  );
+
+  const filteredFrameLogs = useMemo(() => {
+    return indexedFrameLogs.filter((f) => {
+      if (frameFaceOnly && f.faceDetected !== true) return false;
+      if (frameLowConfidenceOnly && !(f.confidenceScore != null && f.confidenceScore < 0.5)) return false;
+      return true;
+    });
+  }, [indexedFrameLogs, frameFaceOnly, frameLowConfidenceOnly]);
+
+  const frameGroups = useFrameGroups(filteredFrameLogs, frameGroupBy);
+
+  // Downsample to ~50 points so the chart stays responsive on long sessions (hundreds of frames).
   const frameLineData = useMemo(() => {
     const logs = content?.frameLogs ?? [];
-    const labels = logs.map((f, idx) => {
-      if (!f.timestamp) return `Frame ${idx + 1}`;
-      const d = new Date(f.timestamp);
+    const bucketSize = Math.max(1, Math.ceil(logs.length / MAX_CHART_POINTS));
+    const buckets: FrameLog[][] = [];
+    for (let i = 0; i < logs.length; i += bucketSize) {
+      buckets.push(logs.slice(i, i + bucketSize));
+    }
+
+    const labels = buckets.map((bucket, idx) => {
+      const rep = bucket[Math.floor(bucket.length / 2)] ?? bucket[0];
+      if (!rep?.timestamp) return `Frame ${idx + 1}`;
+      const d = new Date(rep.timestamp);
       if (Number.isNaN(d.getTime())) return `Frame ${idx + 1}`;
       return d.toLocaleTimeString();
     });
-    const scores = logs.map((f) =>
-      f.hedonicScore == null ? null : Number((f.hedonicScore * 8 + 1).toFixed(1))
-    );
+    const scores = buckets.map((bucket) => {
+      const vals = bucket.map((f) => f.hedonicScore).filter((v): v is number => v != null);
+      if (vals.length === 0) return null;
+      const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+      return Number((avg * 8 + 1).toFixed(1));
+    });
     return {
       labels,
       datasets: [
@@ -454,6 +498,7 @@ export default function SessionDetail() {
                     onSelectedIdsChange={setSelectedSessionIds}
                     onNavigateToSession={(id) => navigate(`/session-detail?sessionId=${id}`)}
                   />
+                  {canExport ? <ExportButton kind="session" sessionId={content.session.id} /> : null}
                   <select
                     value={status}
                     onChange={(e) => onChangeStatus(e.target.value as SessionStatus)}
@@ -548,6 +593,34 @@ export default function SessionDetail() {
                             <Line data={frameLineData as any} options={frameLineOptions as any} />
                           </div>
                         </div>
+
+                        <FrameGroupToolbar
+                          viewMode={frameViewMode}
+                          onViewModeChange={setFrameViewMode}
+                          groupBy={frameGroupBy}
+                          onGroupByChange={setFrameGroupBy}
+                          faceOnly={frameFaceOnly}
+                          onFaceOnlyChange={setFrameFaceOnly}
+                          lowConfidenceOnly={frameLowConfidenceOnly}
+                          onLowConfidenceOnlyChange={setFrameLowConfidenceOnly}
+                        />
+
+                        {frameViewMode === "folders" ? (
+                          <FrameFolderAccordion
+                            groups={frameGroups}
+                            toApiUrl={toApiUrl}
+                            onPreview={(f) =>
+                              setPreviewImage({
+                                url: toApiUrl(f.frameImageUrl) ?? "",
+                                label: formatDateTime(f.timestamp),
+                              })
+                            }
+                          />
+                        ) : filteredFrameLogs.length === 0 ? (
+                          <div className="text-[12px] text-gray-500 py-8 text-center bg-gray-50 rounded-lg border border-gray-100">
+                            No frames match the current filters.
+                          </div>
+                        ) : (
                         <div className="overflow-x-auto">
                           <table className="min-w-[720px] w-full text-left">
                           <thead>
@@ -560,12 +633,12 @@ export default function SessionDetail() {
                             </tr>
                           </thead>
                           <tbody>
-                            {content.frameLogs.map((f, idx) => {
+                            {filteredFrameLogs.map((f) => {
                               const confPct = f.confidenceScore == null ? 0 : clampPct(f.confidenceScore * 100);
                               const hedonic =
                                 f.hedonicScore == null ? null : Number((f.hedonicScore * 8 + 1).toFixed(1));
                               return (
-                                <tr key={`${f.timestamp ?? "t"}-${idx}`} className="border-t border-gray-100">
+                                <tr key={f.index} className="border-t border-gray-100">
                                   <td className="px-3 py-3 text-xs text-gray-700">
                                     {formatDateTime(f.timestamp)}
                                   </td>
@@ -629,6 +702,7 @@ export default function SessionDetail() {
                           </tbody>
                           </table>
                         </div>
+                        )}
                       </div>
                     )}
                   </div>
