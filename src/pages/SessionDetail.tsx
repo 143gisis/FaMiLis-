@@ -635,6 +635,7 @@ export default function SessionDetail() {
                   iconBg="bg-blue-50 text-blue-600"
                   title="Total Frames Analyzed"
                   value={`${content.metrics.totalFrames}`}
+                  infoTerm="framesAnalyzed"
                 />
                 <MetricCard
                   icon="📈"
@@ -678,8 +679,9 @@ export default function SessionDetail() {
                     ) : (
                       <div className="space-y-4">
                         <div className="bg-gray-50 rounded-lg border border-gray-100 p-3">
-                          <p className="text-xs text-gray-600 mb-2 font-semibold">
+                          <p className="text-xs text-gray-600 mb-2 font-semibold inline-flex items-center gap-1.5">
                             Hedonic score over time
+                            <InfoTip term="fer" align="left" />
                           </p>
                           <div className="min-h-[180px] h-[220px]">
                             <Line data={frameLineData as any} options={frameLineOptions as any} />
@@ -1070,11 +1072,10 @@ function SurveyResultsPanel({
       {/* A. Participant Profile */}
       <div>
         <SectionPill>Participant Profile</SectionPill>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <ProfileCard label="Participant ID" value={`P-${sessionId}`} />
           <ProfileCard label="Age" value={sr.age != null ? String(sr.age) : "—"} />
           <ProfileCard label="Gender" value={gender ?? "—"} />
-          <ProfileCard label="Dietary Restrictions" value="—" />
         </div>
       </div>
 
@@ -1112,6 +1113,7 @@ function SurveyResultsPanel({
             variant="metric"
             title="Overall Acceptance"
             value={overallVal != null ? `${Math.round(overallVal)}/9` : "—"}
+            infoTerm="overallAcceptance"
           />
           <InsightCard variant="narrative" text={summaryText} />
         </div>
