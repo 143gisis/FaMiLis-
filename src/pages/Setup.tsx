@@ -395,9 +395,11 @@ export default function Setup() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f6f7fb]" style={{ fontFamily: "'Montserrat', sans-serif" }}>
-      <PageHeader />
-
+    <PageHeader
+      variant="collapsed"
+      backLabel="Back to Dashboard"
+      backTo="/dashboard"
+    >
       {sessionStarted && (
         <div className="fixed top-4 right-4 z-50 bg-green-600 text-white px-5 py-3 rounded-lg shadow-lg text-sm font-semibold flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-300">
           <span aria-hidden="true">✓</span>
@@ -407,7 +409,11 @@ export default function Setup() {
 
       <main className="px-6 py-8">
         <div className="max-w-6xl mx-auto">
-          <PageTitle title="Camera Setup" subtitle="Configure your food testing session" />
+          <PageTitle
+            title="Camera Setup"
+            subtitle="Configure your food testing session"
+            hideBack
+          />
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Left column */}
@@ -665,7 +671,7 @@ export default function Setup() {
           </div>
         </div>
       </main>
-    </div>
+    </PageHeader>
   );
 }
 
