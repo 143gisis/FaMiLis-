@@ -170,9 +170,7 @@ export default function Participants() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f6f7fb]" style={{ fontFamily: "'Montserrat', sans-serif" }}>
-      <PageHeader />
-
+    <PageHeader variant="expanded">
       {toast ? (
         <div className="fixed top-4 right-4 z-50 bg-green-600 text-white px-5 py-3 rounded-lg shadow-lg text-sm font-semibold">
           {toast}
@@ -184,6 +182,7 @@ export default function Participants() {
           <PageTitle
             title="Participants"
             subtitle="Manage tasting participants and open their session history."
+            hideBack
           />
 
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
@@ -283,6 +282,6 @@ export default function Participants() {
           onConfirm={() => void handleDelete()}
         />
       ) : null}
-    </div>
+    </PageHeader>
   );
 }
