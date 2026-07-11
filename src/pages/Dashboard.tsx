@@ -14,7 +14,6 @@ import {
   SectionPill,
   SessionTrendChart,
   StatsCategoryRibbon,
-  TabButton,
   type StatsCategory,
 } from "../components/analytics";
 import { RATING_LABELS, hedonicColor } from "../lib/ratingLabels";
@@ -202,15 +201,6 @@ export default function Dashboard() {
   useEffect(() => {
     setTab(tabFromUrl);
   }, [tabFromUrl]);
-
-  function selectTab(next: TabKey) {
-    setTab(next);
-    if (next === "stats") {
-      setSearchParams({ tab: "stats" }, { replace: true });
-    } else {
-      setSearchParams({}, { replace: true });
-    }
-  }
 
   useEffect(() => {
     foodsAbortRef.current?.abort();
@@ -692,6 +682,7 @@ export default function Dashboard() {
       setExpandedFoodId(created.id);
       setShowAdd(false);
       setTab("food");
+      setSearchParams({}, { replace: true });
       setNewFood({ name: "", category: "" });
       setNewFoodImageFile(null);
     } catch (err) {
@@ -726,7 +717,7 @@ export default function Dashboard() {
           {/* Title + actions */}
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
             <div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Food Testing Hub</h1>
+              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Dashboard</h1>
               <p className="text-xs sm:text-sm text-gray-500 mt-1">Manage and statistically analyze food for testing.</p>
             </div>
             <div className="flex items-center gap-3 shrink-0">
@@ -754,16 +745,6 @@ export default function Dashboard() {
             <MetricCard icon="🍽️" iconBg="bg-red-50 text-[#e8174a]" title="Total Foods" value={String(totalFoods)} />
             <MetricCard icon="✅" iconBg="bg-green-50 text-green-600" title="Active Foods" value={String(activeFoods)} />
             <MetricCard icon="🏷️" iconBg="bg-blue-50 text-blue-600" title="Categories" value={String(categories)} />
-          </div>
-
-          {/* Tabs */}
-          <div className="flex rounded-md overflow-hidden border border-gray-200 bg-white mb-5">
-            <TabButton active={tab === "food"} onClick={() => selectTab("food")}>
-              Food Management
-            </TabButton>
-            <TabButton active={tab === "stats"} onClick={() => selectTab("stats")}>
-              Statistics &amp; Analytics
-            </TabButton>
           </div>
 
           {tab === "food" ? (
@@ -878,6 +859,7 @@ export default function Dashboard() {
                             <InsightCard
                               title="Sample Size (N)"
                               value={String(stats.surveyCount)}
+                              infoTerm="sampleSize"
                               sub={
                                 stats.surveyCount < 5
                                   ? "Need at least 5 surveys for reliable trends"
@@ -889,19 +871,21 @@ export default function Dashboard() {
                               iconBg="bg-blue-50 text-blue-600"
                               title="Testing Sessions"
                               value={String(stats.sessionCount)}
+                              infoTerm="testingSessions"
                             />
                             <MetricCard
                               icon="📷"
                               iconBg="bg-green-50 text-green-600"
                               title="Frames Analyzed"
                               value={String(stats.frameLogCount)}
+                              infoTerm="framesAnalyzed"
                             />
                           </div>
                         </div>
 
                         <LowSampleOverlay active={lowSample} sampleSize={surveyCountN}>
                           <div>
-                            <SectionPill>Session Trends (Over Time)</SectionPill>
+                            <SectionPill infoTerm="sessionTrends">Session Trends (Over Time)</SectionPill>
                             <p className="text-s text-gray-500 -mt-1 mb-4">
                               How survey ratings change across testing sessions for this product
                             </p>
@@ -939,7 +923,7 @@ export default function Dashboard() {
                     {statsCategory === "frames" ? (
                       <LowSampleOverlay active={lowSample} sampleSize={surveyCountN}>
                         <div>
-                          <SectionPill>Reaction Distribution</SectionPill>
+                          <SectionPill infoTerm="ferVsSurvey">Reaction Distribution</SectionPill>
                           <p className="text-s text-gray-500 -mt-1 mb-4">
                             Do consumers like this product? (frame-by-frame FER)
                           </p>
@@ -1006,7 +990,7 @@ export default function Dashboard() {
                         <div>
                           <SectionPill infoTerm="fer">FER Timeline (In-Session Reactions)</SectionPill>
                           <p className="text-s text-gray-500 -mt-1 mb-4">
-                            Average hedonics over time over a single testing session — distinct from session-over-time trends above
+                            Average hedonics over time over a single testing session
                           </p>
                           <div className="bg-gray-50 rounded-lg border border-gray-100 p-4">
                             <p className="text-xs text-gray-600 font-semibold mb-2">
@@ -1060,7 +1044,7 @@ export default function Dashboard() {
                               </div>
                             </div>
                             <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
-                              {stats.radar.map((r) => {
+                              {stats.radar.map((r, i) => {
                                 const aspectKey = ASPECT_KEY_BY_LABEL[r.label];
                                 const aspect = aspectKey ? stats.aspectStats[aspectKey] : undefined;
                                 return (
@@ -1071,6 +1055,7 @@ export default function Dashboard() {
                                     color={ATTRIBUTE_COLORS[r.label] ?? "#e8174a"}
                                     n={aspect?.n}
                                     stdDev={aspect?.stdDev}
+                                    showStatsTips={i === 0}
                                   />
                                 );
                               })}
@@ -1083,7 +1068,7 @@ export default function Dashboard() {
                     {statsCategory === "demographics" ? (
                       <LowSampleOverlay active={lowSample} sampleSize={surveyCountN}>
                         <div>
-                          <SectionPill>Demographics</SectionPill>
+                          <SectionPill infoTerm="demographicsHedonic">Demographics</SectionPill>
                           <p className="text-s text-gray-500 -mt-1 mb-4">
                             Consumer profile and survey-based hedonic scores
                           </p>
