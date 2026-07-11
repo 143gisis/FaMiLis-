@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_BASE, apiFetch } from "../lib/api";
 import { getStoredRole, isAdminRole } from "../RequireAuth";
@@ -13,7 +13,9 @@ import {
   MetricCard,
   SectionPill,
   SessionTrendChart,
+  StatsCategoryRibbon,
   TabButton,
+  type StatsCategory,
 } from "../components/analytics";
 import { RATING_LABELS, hedonicColor } from "../lib/ratingLabels";
 import { ATTRIBUTE_COLORS, getDemoColor } from "../lib/attributeColors";
@@ -119,11 +121,11 @@ const EMPTY_ANALYTICS: Analytics = {
     { label: "Negative (1-4)", value: 0, color: "#ef4444" },
   ],
   radar: [
+    { label: "Overall", score: 0 },
     { label: "Color", score: 0 },
     { label: "Flavor/Aroma", score: 0 },
     { label: "Salt/Sweet", score: 0 },
     { label: "Texture", score: 0 },
-    { label: "Overall", score: 0 },
   ],
   timeline: [
     { label: "First taste", score: 0, sub: "Early" },
@@ -158,6 +160,7 @@ export default function Dashboard() {
   const canExport = isAdminRole(getStoredRole());
 
   const [tab, setTab] = useState<TabKey>("food");
+  const [statsCategory, setStatsCategory] = useState<StatsCategory>("overall");
   const [foods, setFoods] = useState<Food[]>([]);
   const [expandedFoodId, setExpandedFoodId] = useState<number | null>(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -467,14 +470,17 @@ export default function Dashboard() {
     return issues;
   }, [selectedFood, stats.frameLogCount, stats.sessionCount, stats.surveyCount]);
 
-  // Hide analytics visuals when critical data is missing
+  // Hide analytics visuals only when there is no usable session/frame signal at all.
+  // Low survey counts still render so LowSampleOverlay can cover chart panes.
   const hideAnalyticsGraphs = useMemo(() => {
     if (!selectedFood) return true;
     const sessionCount = Number(stats.sessionCount ?? 0);
     const frameLogCount = Number(stats.frameLogCount ?? 0);
-    const surveyCount = Number(stats.surveyCount ?? 0);
-    return sessionCount <= 0 || frameLogCount <= 0 || surveyCount <= 0;
-  }, [selectedFood, stats.sessionCount, stats.frameLogCount, stats.surveyCount]);
+    return sessionCount <= 0 && frameLogCount <= 0;
+  }, [selectedFood, stats.sessionCount, stats.frameLogCount]);
+
+  const surveyCountN = Number(stats.surveyCount ?? 0);
+  const lowSample = surveyCountN < 5;
 
   // Exclude "Overall" from the radar chart — keep only the 4 attribute axes.
   const radarAttributes = useMemo(
@@ -770,7 +776,7 @@ export default function Dashboard() {
                   <p className="text-xs mt-1">Click "Add New Food" to register your first product for testing.</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 lg:grid-cols-4 lg:grid-cols-3 gap-4">
                   {foods.map((food) => (
                     <FoodCard
                       key={food.id}
@@ -823,7 +829,9 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="p-5 space-y-6">
+              <div className="p-5 space-y-5">
+                <StatsCategoryRibbon active={statsCategory} onChange={setStatsCategory} />
+
                 {selectedFood && analyticsLoading[selectedFood.id] ? (
                   <AnalyticsSkeleton />
                 ) : null}
@@ -841,66 +849,85 @@ export default function Dashboard() {
 
                 {selectedFood && !analyticsLoading[selectedFood.id] && !hideAnalyticsGraphs ? (
                   <>
-                    <div>
-                      <SectionPill>Product Analytics</SectionPill>
-                      <p className="text-s text-gray-500 -mt-1 mb-4">
-                        {selectedFood.name} · Live analytics from DB
-                      </p>
+                    {statsCategory === "overall" ? (
+                      <div className="space-y-6">
+                        <div>
+                          <SectionPill>Product Analytics</SectionPill>
+                          <p className="text-s text-gray-500 -mt-1 mb-4">
+                            {selectedFood.name} · Live analytics from DB
+                          </p>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[1fr_1.2fr] gap-4 mb-4">
-                        <HeroHedonicCard
-                          score={stats.surveyCount > 0 ? stats.aspectStats.overall.mean : null}
-                        />
-                        <FerConfidenceCard meanConfidence={stats.meanConfidence} />
-                      </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[1fr_1.2fr] gap-4 mb-4">
+                            <HeroHedonicCard
+                              score={stats.surveyCount > 0 ? stats.aspectStats.overall.mean : null}
+                            />
+                            <FerConfidenceCard meanConfidence={stats.meanConfidence} />
+                          </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <InsightCard
-                          title="Sample Size (N)"
-                          value={String(stats.surveyCount)}
-                          sub={
-                            stats.surveyCount < 5
-                              ? "Need at least 5 surveys for reliable trends"
-                              : "Completed survey responses for this product"
-                          }
-                        />
-                        <MetricCard
-                          icon="📋"
-                          iconBg="bg-blue-50 text-blue-600"
-                          title="Testing Sessions"
-                          value={String(stats.sessionCount)}
-                        />
-                        <MetricCard
-                          icon="📷"
-                          iconBg="bg-green-50 text-green-600"
-                          title="Frames Analyzed"
-                          value={String(stats.frameLogCount)}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="relative space-y-6">
-                      {stats.surveyCount < 5 ? (
-                        <div className="absolute inset-0 z-10 flex items-start justify-center pt-20 pointer-events-none">
-                          <div className="bg-white/90 border border-gray-200 rounded-xl shadow px-5 py-4 text-center max-w-xs pointer-events-auto">
-                            <p className="text-sm font-bold text-gray-800 mb-1">Low sample size</p>
-                            <p className="text-xs text-gray-500">
-                              Need at least 5 surveys for reliable trends.{" "}
-                              <span className="font-semibold text-gray-700">
-                                Currently: {stats.surveyCount}
-                              </span>
-                            </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <InsightCard
+                              title="Sample Size (N)"
+                              value={String(stats.surveyCount)}
+                              sub={
+                                stats.surveyCount < 5
+                                  ? "Need at least 5 surveys for reliable trends"
+                                  : "Completed survey responses for this product"
+                              }
+                            />
+                            <MetricCard
+                              icon="📋"
+                              iconBg="bg-blue-50 text-blue-600"
+                              title="Testing Sessions"
+                              value={String(stats.sessionCount)}
+                            />
+                            <MetricCard
+                              icon="📷"
+                              iconBg="bg-green-50 text-green-600"
+                              title="Frames Analyzed"
+                              value={String(stats.frameLogCount)}
+                            />
                           </div>
                         </div>
-                      ) : null}
 
-                      <div
-                        className={
-                          stats.surveyCount < 5
-                            ? "opacity-30 pointer-events-none select-none space-y-6"
-                            : "space-y-6"
-                        }
-                      >
+                        <LowSampleOverlay active={lowSample} sampleSize={surveyCountN}>
+                          <div>
+                            <SectionPill>Session Trends (Over Time)</SectionPill>
+                            <p className="text-s text-gray-500 -mt-1 mb-4">
+                              How survey ratings change across testing sessions for this product
+                            </p>
+                            <SessionTrendChart sessionTrends={stats.sessionTrends} />
+                          </div>
+
+                          <div>
+                            <SectionPill>9-Point Hedonic Scale Reference</SectionPill>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 mt-3">
+                              {Array.from({ length: 9 }, (_, i) => 9 - i).map((score) => {
+                                const isPositive = score >= 7;
+                                const isNegative = score <= 4;
+                                return (
+                                  <div
+                                    key={score}
+                                    className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${
+                                      isPositive
+                                        ? "bg-green-50 text-green-800"
+                                        : isNegative
+                                          ? "bg-red-50 text-red-800"
+                                          : "bg-yellow-50 text-yellow-800"
+                                    }`}
+                                  >
+                                    <span className="font-bold w-4 text-center tabular-nums">{score}</span>
+                                    <span>{RATING_LABELS[score]}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </LowSampleOverlay>
+                      </div>
+                    ) : null}
+
+                    {statsCategory === "frames" ? (
+                      <LowSampleOverlay active={lowSample} sampleSize={surveyCountN}>
                         <div>
                           <SectionPill>Reaction Distribution</SectionPill>
                           <p className="text-s text-gray-500 -mt-1 mb-4">
@@ -967,6 +994,50 @@ export default function Dashboard() {
                         </div>
 
                         <div>
+                          <SectionPill infoTerm="fer">FER Timeline (In-Session Reactions)</SectionPill>
+                          <p className="text-s text-gray-500 -mt-1 mb-4">
+                            Average hedonics over time over a single testing session — distinct from session-over-time trends above
+                          </p>
+                          <div className="bg-gray-50 rounded-lg border border-gray-100 p-4">
+                            <p className="text-xs text-gray-600 font-semibold mb-2">
+                              Hedonic score over session phases
+                            </p>
+                            <div className="min-h-[180px] h-[220px]">
+                              <Line data={lineChartData as any} options={lineChartOptions as any} />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                            <SectionPill>9-Point Hedonic Scale Reference</SectionPill>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 mt-3">
+                              {Array.from({ length: 9 }, (_, i) => 9 - i).map((score) => {
+                                const isPositive = score >= 7;
+                                const isNegative = score <= 4;
+                                return (
+                                  <div
+                                    key={score}
+                                    className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${
+                                      isPositive
+                                        ? "bg-green-50 text-green-800"
+                                        : isNegative
+                                          ? "bg-red-50 text-red-800"
+                                          : "bg-yellow-50 text-yellow-800"
+                                    }`}
+                                  >
+                                    <span className="font-bold w-4 text-center tabular-nums">{score}</span>
+                                    <span>{RATING_LABELS[score]}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                      </LowSampleOverlay>
+                    ) : null}
+
+                    {statsCategory === "survey" ? (
+                      <LowSampleOverlay active={lowSample} sampleSize={surveyCountN}>
+                        <div>
                           <SectionPill infoTerm="sensoryAttributes">Sensory Attributes</SectionPill>
                           <p className="text-s text-gray-500 -mt-1 mb-4">
                             What consumers like about the product (survey-based)
@@ -996,30 +1067,11 @@ export default function Dashboard() {
                             </div>
                           </div>
                         </div>
+                      </LowSampleOverlay>
+                    ) : null}
 
-                        <div>
-                          <SectionPill>Session Trends (Over Time)</SectionPill>
-                          <p className="text-s text-gray-500 -mt-1 mb-4">
-                            How survey ratings change across testing sessions for this product
-                          </p>
-                          <SessionTrendChart sessionTrends={stats.sessionTrends} />
-                        </div>
-
-                        <div>
-                          <SectionPill infoTerm="fer">FER Timeline (In-Session Reactions)</SectionPill>
-                          <p className="text-s text-gray-500 -mt-1 mb-4">
-                            Average hedonics over time over a single testing session — distinct from session-over-time trends above
-                          </p>
-                          <div className="bg-gray-50 rounded-lg border border-gray-100 p-4">
-                            <p className="text-xs text-gray-600 font-semibold mb-2">
-                              Hedonic score over session phases
-                            </p>
-                            <div className="min-h-[180px] h-[220px]">
-                              <Line data={lineChartData as any} options={lineChartOptions as any} />
-                            </div>
-                          </div>
-                        </div>
-
+                    {statsCategory === "demographics" ? (
+                      <LowSampleOverlay active={lowSample} sampleSize={surveyCountN}>
                         <div>
                           <SectionPill>Demographics</SectionPill>
                           <p className="text-s text-gray-500 -mt-1 mb-4">
@@ -1062,33 +1114,8 @@ export default function Dashboard() {
                             </div>
                           </div>
                         </div>
-
-                        <div>
-                          <SectionPill>9-Point Hedonic Scale Reference</SectionPill>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 mt-3">
-                            {Array.from({ length: 9 }, (_, i) => 9 - i).map((score) => {
-                              const isPositive = score >= 7;
-                              const isNegative = score <= 4;
-                              return (
-                                <div
-                                  key={score}
-                                  className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${
-                                    isPositive
-                                      ? "bg-green-50 text-green-800"
-                                      : isNegative
-                                        ? "bg-red-50 text-red-800"
-                                        : "bg-yellow-50 text-yellow-800"
-                                  }`}
-                                >
-                                  <span className="font-bold w-4 text-center tabular-nums">{score}</span>
-                                  <span>{RATING_LABELS[score]}</span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+                      </LowSampleOverlay>
+                    ) : null}
                   </>
                 ) : selectedFood && !analyticsLoading[selectedFood.id] && hideAnalyticsGraphs ? (
                   <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-md px-4 py-2">
@@ -1360,6 +1387,37 @@ export default function Dashboard() {
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function LowSampleOverlay({
+  active,
+  sampleSize,
+  children,
+}: {
+  active: boolean;
+  sampleSize: number;
+  children: ReactNode;
+}) {
+  if (!active) {
+    return <div className="space-y-6">{children}</div>;
+  }
+
+  return (
+    <div className="relative isolate min-h-[220px]">
+      <div className="opacity-30 pointer-events-none select-none space-y-6" aria-hidden="true">
+        {children}
+      </div>
+      <div className="absolute inset-0 z-20 flex items-center justify-center p-4">
+        <div className="bg-white/95 border border-gray-200 rounded-xl shadow-md px-5 py-4 text-center max-w-xs">
+          <p className="text-sm font-bold text-gray-800 mb-1">Low sample size</p>
+          <p className="text-xs text-gray-500">
+            Need at least 5 surveys for reliable trends.{" "}
+            <span className="font-semibold text-gray-700">Currently: {sampleSize}</span>
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
