@@ -585,9 +585,8 @@ export default function SessionDetail() {
                     <button
                       type="button"
                       onClick={() => navigate(`/participants/${content.participant!.id}`)}
-                      className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#e8174a] hover:text-[#c9143f] transition-colors"
+                      className="mt-2 inline-flex items-center text-xs font-semibold text-[#e8174a] hover:text-[#c9143f] transition-colors"
                     >
-                      <span aria-hidden="true">👤</span>
                       View participant{content.participant.testerLabel ? ` (${content.participant.testerLabel})` : ""}
                     </button>
                   ) : null}
@@ -606,7 +605,7 @@ export default function SessionDetail() {
                     value={status}
                     onChange={(e) => onChangeStatus(e.target.value as SessionStatus)}
                     disabled={statusSaving}
-                    className="text-sm border border-gray-200 rounded-md px-3 py-2 bg-white"
+                    className="text-sm font-semibold border border-gray-200 rounded-md px-3 py-2 bg-white"
                     aria-label="Session status"
                   >
                     {statusOptions.map((s) => (
@@ -619,14 +618,14 @@ export default function SessionDetail() {
                     type="button"
                     onClick={() => setInvalidateOpen(true)}
                     disabled={!!content.session.invalidatedAt || invalidatePending}
-                    className="text-sm border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-md px-3 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="text-sm font-semibold border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-md px-3 py-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     {content.session.invalidatedAt ? "Invalidated" : "Invalidate"}
                   </button>
                   <button
                     type="button"
                     onClick={() => setDeleteOpen(true)}
-                    className="text-sm border border-red-200 text-red-700 hover:bg-red-50 rounded-md px-3 py-2"
+                    className="text-sm font-semibold border border-red-200 text-red-700 hover:bg-red-50 rounded-md px-3 py-2 transition-colors"
                   >
                     Delete Session
                   </button>
@@ -738,8 +737,8 @@ export default function SessionDetail() {
                             <tr className="text-xs text-gray-500 bg-gray-50">
                               <th className="px-2 py-3 font-semibold">Timestamp</th>
                               <th className="px-1 py-3 font-semibold">Face Detected</th>
-                              <th className="px-6 py-3 font-semibold">Confidence Score</th>
-                              <th className="px-1 py-3 font-semibold">Hedonic Score</th>
+                              <th className="px-6 py-3 text-center font-semibold">Confidence Score</th>
+                              <th className="px-1 py-3 text-center font-semibold">Hedonic Score</th>
                               <th className="px-3 py-3 font-semibold">Frame Image</th>
                               <th className="px-3 py-3 font-semibold">Actions</th>
                             </tr>
@@ -754,7 +753,7 @@ export default function SessionDetail() {
                                   <td className="px-3 py-3 text-xs text-gray-700">
                                     {formatDateTime(f.timestamp)}
                                   </td>
-                                  <td className="px-3 py-3 text-xs text-gray-700">
+                                  <td className="px-3 py-3 text-s text-gray-700">
                                     {f.faceDetected === true ? (
                                       <span className="text-green-700 font-semibold">✓ Yes</span>
                                     ) : f.faceDetected === false ? (
@@ -763,7 +762,7 @@ export default function SessionDetail() {
                                       <span className="text-gray-400">-</span>
                                     )}
                                   </td>
-                                  <td className="px-3 py-3 text-xs text-gray-700">
+                                  <td className="px-3 py-3 text-s text-gray-700">
                                     <div className="w-full">
                                       <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
                                         <div
@@ -772,16 +771,16 @@ export default function SessionDetail() {
                                           aria-label={`Confidence ${Math.round(confPct)}%`}
                                         />
                                       </div>
-                                      <div className="mt-1 text-right text-xs text-gray-500">
+                                      <div className="mt-1 text-right text-s text-gray-500">
                                         {f.confidenceScore == null ? "0%" : `${Math.round(f.confidenceScore * 100)}%`}
                                       </div>
                                     </div>
                                   </td>
-                                  <td className="px-3 py-3 text-xs text-gray-700">
+                                  <td className="px-3 py-3 text-lg text-center text-gray-700">
                                     {hedonic == null ? (
-                                      <span className="text-gray-400">- / 9</span>
+                                      <span className="text-gray-400 text-lg">- / 9</span>
                                     ) : (
-                                      <span className="font-semibold">
+                                      <span className="font-semibold text-lg">
                                         {hedonic} / 9
                                       </span>
                                     )}
@@ -796,12 +795,12 @@ export default function SessionDetail() {
                                             label: formatDateTime(f.timestamp),
                                           })
                                         }
-                                        className="group"
+                                        className="group block w-full"
                                       >
                                         <img
                                           src={toApiUrl(f.frameImageUrl) ?? undefined}
                                           alt={`Frame at ${formatDateTime(f.timestamp)}`}
-                                          className="w-24 h-24 rounded-md border border-gray-200 object-cover group-hover:opacity-90"
+                                          className="w-full h-24 rounded-md border border-gray-200 object-cover group-hover:opacity-90"
                                         />
                                       </button>
                                     ) : (
@@ -809,14 +808,14 @@ export default function SessionDetail() {
                                     )}
                                   </td>
                                   <td className="px-3 py-3 text-xs text-gray-700">
-                                    <div className="flex items-center gap-2 whitespace-nowrap">
+                                    <div className="flex items-center gap-3 whitespace-nowrap">
                                       <button
                                         type="button"
                                         onClick={() => {
                                           setFrameEditError(null);
                                           setEditingFrame(f);
                                         }}
-                                        className="text-[#e8174a] hover:underline font-semibold"
+                                        className="text-s font-semibold text-gray-600 hover:text-gray-900 transition-colors"
                                       >
                                         Edit
                                       </button>
@@ -826,7 +825,7 @@ export default function SessionDetail() {
                                           setFrameDeleteError(null);
                                           setDeletingFrame(f);
                                         }}
-                                        className="text-red-600 hover:underline font-semibold"
+                                        className="text-s font-semibold text-red-600 hover:text-red-700 transition-colors"
                                       >
                                         Delete
                                       </button>
@@ -902,7 +901,7 @@ export default function SessionDetail() {
               <button
                 type="button"
                 onClick={() => setPreviewImage(null)}
-                className="text-xs text-gray-600 hover:text-gray-900"
+                className="text-xs font-semibold text-gray-600 hover:text-gray-900 transition-colors"
               >
                 Close
               </button>
@@ -940,8 +939,15 @@ export default function SessionDetail() {
       ) : null}
       {deleteOpen && content ? (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
-            <h2 className="text-gray-900 font-bold mb-2">Delete this session?</h2>
+          <div
+            className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="session-delete-title"
+          >
+            <h2 id="session-delete-title" className="text-gray-900 font-bold mb-2">
+              Delete this session?
+            </h2>
             <p className="text-sm text-gray-600">
               This permanently deletes session <span className="font-semibold">S-{content.session.id}</span>.
             </p>
@@ -958,9 +964,9 @@ export default function SessionDetail() {
                 type="button"
                 onClick={onDeleteSession}
                 disabled={deletePending}
-                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-md text-sm font-semibold transition-colors"
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-md text-sm font-semibold transition-colors disabled:opacity-60"
               >
-                {deletePending ? "Deleting..." : "Delete"}
+                {deletePending ? "Deleting…" : "Delete"}
               </button>
             </div>
           </div>
@@ -969,9 +975,16 @@ export default function SessionDetail() {
 
       {invalidateOpen && content ? (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4 border border-gray-200">
-            <h2 className="text-gray-900 font-bold text-lg">Invalidate this session?</h2>
-            <p className="text-sm text-gray-600 mt-2">
+          <div
+            className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="session-invalidate-title"
+          >
+            <h2 id="session-invalidate-title" className="text-gray-900 font-bold mb-2">
+              Invalidate this session?
+            </h2>
+            <p className="text-sm text-gray-600">
               This marks session <span className="font-semibold">S-{content.session.id}</span> for deletion.
               Frame data will be removed per the retention policy, and no new frames can be recorded. The
               session is not deleted immediately.
@@ -989,9 +1002,9 @@ export default function SessionDetail() {
                 type="button"
                 onClick={onInvalidateSession}
                 disabled={invalidatePending}
-                className="flex-1 bg-amber-500 hover:bg-amber-600 text-white py-2 rounded-md text-sm font-semibold transition-colors"
+                className="flex-1 bg-amber-500 hover:bg-amber-600 text-white py-2 rounded-md text-sm font-semibold transition-colors disabled:opacity-60"
               >
-                {invalidatePending ? "Invalidating..." : "Invalidate"}
+                {invalidatePending ? "Invalidating…" : "Invalidate"}
               </button>
             </div>
           </div>

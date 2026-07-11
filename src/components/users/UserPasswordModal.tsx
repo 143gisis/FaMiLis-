@@ -75,7 +75,7 @@ export function UserPasswordModal({
           <p className="text-xs text-red-600 mt-3">{error}</p>
         ) : (
           <p className="text-xs text-gray-400 mt-3">
-            Demo only: share the new password with the user directly.
+            Please inform the user of the new password change.
           </p>
         )}
 

@@ -50,7 +50,7 @@ export function SessionContinuationCard({
           type="button"
           onClick={onSameProduct}
           disabled={starting}
-          className={`flex-1 sm:flex-none px-5 py-2.5 rounded-lg text-sm font-bold transition-colors ${
+          className={`flex-1 sm:flex-none px-5 py-2 rounded-md text-sm font-semibold transition-colors ${
             starting
               ? "bg-gray-200 text-gray-400 cursor-not-allowed"
               : "bg-[#e8174a] hover:bg-[#c9143f] text-white shadow-sm"
@@ -62,10 +62,10 @@ export function SessionContinuationCard({
           type="button"
           onClick={onDifferentProduct}
           disabled={starting}
-          className={`flex-1 sm:flex-none px-5 py-2.5 rounded-lg text-sm font-bold transition-colors ${
+          className={`flex-1 sm:flex-none px-5 py-2 rounded-md text-sm font-semibold transition-colors ${
             starting
-              ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-              : "border border-gray-300 text-gray-800 hover:bg-gray-50"
+              ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+              : "border border-gray-200 text-gray-700 hover:bg-gray-50"
           }`}
         >
           Different product
@@ -74,10 +74,10 @@ export function SessionContinuationCard({
           type="button"
           onClick={onDone}
           disabled={starting}
-          className={`flex-1 sm:flex-none px-5 py-2.5 rounded-lg text-sm font-bold transition-colors ${
+          className={`flex-1 sm:flex-none px-5 py-2 rounded-md text-sm font-semibold transition-colors ${
             starting
-              ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-              : "border border-gray-300 text-gray-800 hover:bg-gray-50"
+              ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+              : "border border-gray-200 text-gray-700 hover:bg-gray-50"
           }`}
         >
           I'm done
@@ -89,7 +89,7 @@ export function SessionContinuationCard({
           type="button"
           onClick={onReturnToSetup}
           disabled={starting}
-          className="mt-4 text-xs font-semibold text-gray-500 hover:text-gray-800 underline underline-offset-2 transition-colors disabled:opacity-50"
+          className="mt-4 text-xs font-semibold text-gray-600 hover:text-gray-900 transition-colors disabled:opacity-50"
         >
           Return to Setup for next product
         </button>

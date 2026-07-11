@@ -236,7 +236,7 @@ export default function ParticipantDetail() {
                       setFormError(null);
                       setEditOpen(true);
                     }}
-                    className="border border-gray-200 text-gray-700 hover:bg-gray-50 text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors whitespace-nowrap"
+                    className="border border-gray-200 text-gray-700 hover:bg-gray-50 text-sm font-semibold px-4 py-2 rounded-md transition-colors whitespace-nowrap"
                   >
                     Edit
                   </button>
@@ -246,14 +246,14 @@ export default function ParticipantDetail() {
                       setDeleteError(null);
                       setDeleteOpen(true);
                     }}
-                    className="border border-red-200 text-red-700 hover:bg-red-50 text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors whitespace-nowrap"
+                    className="border border-red-200 text-red-700 hover:bg-red-50 text-sm font-semibold px-4 py-2 rounded-md transition-colors whitespace-nowrap"
                   >
                     Delete
                   </button>
                   <button
                     type="button"
                     onClick={handleStartNewSession}
-                    className="bg-[#e8174a] hover:bg-[#c9143f] text-white text-sm font-semibold px-5 py-2.5 rounded-lg shadow-sm transition-colors whitespace-nowrap"
+                    className="bg-[#e8174a] hover:bg-[#c9143f] text-white text-sm font-semibold px-4 py-2 rounded-md shadow-sm transition-colors whitespace-nowrap"
                   >
                     Start new session
                   </button>

@@ -588,9 +588,37 @@ async function start() {
     try {
       const [rows] = await pool.query(
         `
-        SELECT participant_id, tester_label, age, gender, created_at
-        FROM participants
-        ORDER BY created_at DESC, participant_id DESC
+        SELECT
+          p.participant_id,
+          p.tester_label,
+          p.age,
+          p.gender,
+          p.created_at,
+          (
+            SELECT COUNT(*)
+            FROM sessions s
+            WHERE s.participant_id = p.participant_id
+          ) AS session_count,
+          (
+            SELECT MAX(s.start_time)
+            FROM sessions s
+            WHERE s.participant_id = p.participant_id
+          ) AS last_session_at,
+          (
+            SELECT COUNT(DISTINCT s.food_id)
+            FROM sessions s
+            WHERE s.participant_id = p.participant_id
+          ) AS foods_tasted_count,
+          (
+            SELECT fp.name
+            FROM sessions s
+            LEFT JOIN food_products fp ON fp.food_id = s.food_id
+            WHERE s.participant_id = p.participant_id
+            ORDER BY s.start_time DESC, s.session_id DESC
+            LIMIT 1
+          ) AS last_food_name
+        FROM participants p
+        ORDER BY p.created_at DESC, p.participant_id DESC
       `
       );
       return res.json({
@@ -601,6 +629,10 @@ async function start() {
           age: r.age == null ? null : Number(r.age),
           gender: r.gender == null ? null : String(r.gender),
           createdAt: toIsoOrNull(r.created_at),
+          sessionCount: Number(r.session_count ?? 0),
+          lastSessionAt: toIsoOrNull(r.last_session_at),
+          lastFoodName: r.last_food_name == null ? null : String(r.last_food_name),
+          foodsTastedCount: Number(r.foods_tasted_count ?? 0),
         })),
       });
     } catch (err) {

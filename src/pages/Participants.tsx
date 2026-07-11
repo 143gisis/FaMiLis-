@@ -216,14 +216,18 @@ export default function Participants() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="min-w-[720px] w-full text-left">
+                <table className="min-w-[960px] w-full text-left">
                   <thead>
                     <tr className="text-xs text-gray-500 bg-gray-50">
                       <th className="px-4 py-3 font-semibold">Label</th>
-                      <th className="px-4 py-3 font-semibold">Age</th>
-                      <th className="px-4 py-3 font-semibold">Gender</th>
-                      <th className="px-4 py-3 font-semibold">Created</th>
-                      <th className="px-4 py-3 font-semibold text-right">Actions</th>
+                      <th className="px-4 py-3 font-semibold w-16">Age</th>
+                      <th className="px-4 py-3 font-semibold w-24">Gender</th>
+                      <th className="px-4 py-3 font-semibold w-28">Created</th>
+                      <th className="px-4 py-3 font-semibold w-20">Sessions</th>
+                      <th className="px-4 py-3 font-semibold w-14">Last Tasted Food</th>
+                      <th className="px-4 py-3 font-semibold text-right w-[1%] whitespace-nowrap">
+                        Actions
+                      </th>
                     </tr>
                   </thead>
                   <tbody>

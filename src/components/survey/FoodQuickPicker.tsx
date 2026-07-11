@@ -111,7 +111,7 @@ export function FoodQuickPicker({
                     type="button"
                     onClick={() => setSelectedId(food.id)}
                     disabled={starting}
-                    className={`w-full text-left px-3.5 py-2.5 rounded-lg border transition-colors ${
+                    className={`w-full text-left px-3.5 py-2.5 rounded-md border transition-colors ${
                       isSelected
                         ? "border-[#e8174a] bg-[#fde8ed]"
                         : "border-gray-200 hover:bg-gray-50"

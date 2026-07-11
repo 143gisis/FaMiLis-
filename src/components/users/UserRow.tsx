@@ -62,26 +62,26 @@ export function UserRow({
           <span className="text-gray-400 font-semibold">Inactive</span>
         )}
       </td>
-      <td className="px-4 py-3">
-        <div className="flex items-center justify-end gap-3 flex-wrap">
+      <td className="px-4 py-2.5">
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 w-[13rem] ml-auto">
           <button
             type="button"
             onClick={onEdit}
-            className="text-xs font-semibold text-gray-600 hover:text-gray-900 transition-colors whitespace-nowrap"
+            className="text-sm font-semibold text-gray-600 hover:text-gray-900 transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e8174a]/40 rounded-sm"
           >
-            Edit
+            Edit user
           </button>
           <button
             type="button"
             onClick={onChangeRole}
-            className="text-xs font-semibold text-gray-600 hover:text-gray-900 transition-colors whitespace-nowrap"
+            className="text-sm font-semibold text-gray-600 hover:text-gray-900 transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e8174a]/40 rounded-sm"
           >
             Change role
           </button>
           <button
             type="button"
             onClick={onSetPassword}
-            className="text-xs font-semibold text-[#e8174a] hover:text-[#c9143f] transition-colors whitespace-nowrap"
+            className="text-sm font-semibold text-[#e8174a] hover:text-[#c9143f] transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e8174a]/40 rounded-sm"
           >
             Set password
           </button>
@@ -89,7 +89,7 @@ export function UserRow({
             type="button"
             onClick={onToggleActive}
             disabled={isSelf && user.isActive}
-            className={`text-xs font-semibold transition-colors whitespace-nowrap ${
+            className={`text-sm font-semibold transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e8174a]/40 rounded-sm ${
               isSelf && user.isActive
                 ? "text-gray-300 cursor-not-allowed"
                 : user.isActive

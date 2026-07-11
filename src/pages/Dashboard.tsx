@@ -1249,8 +1249,15 @@ export default function Dashboard() {
 
       {foodToDelete ? (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
-            <h2 className="text-gray-900 font-bold mb-2">Delete food?</h2>
+          <div
+            className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="food-delete-title"
+          >
+            <h2 id="food-delete-title" className="text-gray-900 font-bold mb-2">
+              Delete food?
+            </h2>
             <p className="text-sm text-gray-600">
               This will permanently remove <span className="font-semibold">{foodToDelete.name}</span> and
               its related sessions.
@@ -1269,9 +1276,9 @@ export default function Dashboard() {
                 type="button"
                 onClick={() => onDeleteFood(foodToDelete.id)}
                 disabled={deletingFoodId === foodToDelete.id}
-                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-md text-sm font-semibold transition-colors"
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-md text-sm font-semibold transition-colors disabled:opacity-60"
               >
-                {deletingFoodId === foodToDelete.id ? "Deleting..." : "Delete"}
+                {deletingFoodId === foodToDelete.id ? "Deleting…" : "Delete"}
               </button>
             </div>
           </div>

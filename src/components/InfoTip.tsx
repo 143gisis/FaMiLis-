@@ -76,9 +76,9 @@ export function InfoTip({ term, className = "", align = "center" }: InfoTipProps
       {open ? (
         <div
           role="tooltip"
-          className={`absolute z-50 top-full mt-1.5 w-56 sm:w-64 bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-left normal-case tracking-normal not-italic ${alignClasses}`}
+          className={`absolute z-50 top-full mt-1.5 w-56 sm:w-64 bg-white border border-gray-200 rounded-md shadow-lg p-3 text-left normal-case tracking-normal not-italic ${alignClasses}`}
         >
-          <p className="text-xs font-bold text-gray-900 normal-case tracking-normal mb-1">{entry.title}</p>
+          <p className="text-xs font-semibold text-gray-900 normal-case tracking-normal mb-1">{entry.title}</p>
           <p className="text-[11px] text-gray-600 normal-case tracking-normal leading-relaxed">{entry.body}</p>
         </div>
       ) : null}

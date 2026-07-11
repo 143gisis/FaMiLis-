@@ -73,12 +73,12 @@ export function FrameGalleryGrid({
                 ) : null}
               </button>
               {onEdit || onDelete ? (
-                <div className="flex items-center justify-center gap-2 text-[10px]">
+                <div className="flex items-center justify-center gap-2">
                   {onEdit ? (
                     <button
                       type="button"
                       onClick={() => onEdit(f)}
-                      className="text-[#e8174a] hover:underline font-semibold"
+                      className="text-xs font-semibold text-gray-600 hover:text-gray-900 transition-colors"
                     >
                       Edit
                     </button>
@@ -87,7 +87,7 @@ export function FrameGalleryGrid({
                     <button
                       type="button"
                       onClick={() => onDelete(f)}
-                      className="text-red-600 hover:underline font-semibold"
+                      className="text-xs font-semibold text-red-600 hover:text-red-700 transition-colors"
                     >
                       Delete
                     </button>
@@ -104,7 +104,7 @@ export function FrameGalleryGrid({
             type="button"
             onClick={() => setPage((p) => Math.max(0, p - 1))}
             disabled={clampedPage === 0}
-            className="px-2.5 py-1 rounded-md border border-gray-200 disabled:opacity-40 hover:bg-gray-50"
+            className="px-2.5 py-1 rounded-md border border-gray-200 text-xs font-semibold text-gray-700 disabled:opacity-40 hover:bg-gray-50 transition-colors"
           >
             ← Prev
           </button>
@@ -115,7 +115,7 @@ export function FrameGalleryGrid({
             type="button"
             onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
             disabled={clampedPage >= totalPages - 1}
-            className="px-2.5 py-1 rounded-md border border-gray-200 disabled:opacity-40 hover:bg-gray-50"
+            className="px-2.5 py-1 rounded-md border border-gray-200 text-xs font-semibold text-gray-700 disabled:opacity-40 hover:bg-gray-50 transition-colors"
           >
             Next →
           </button>

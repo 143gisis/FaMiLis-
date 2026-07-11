@@ -70,6 +70,7 @@ export function FrameEditModal({
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (saving) return;
     const conf = fromConfidenceUi(confidence);
     if (!conf.ok) {
       setLocalError(conf.error);
@@ -89,6 +90,7 @@ export function FrameEditModal({
   }
 
   const displayError = localError || error;
+  const canSubmit = !saving;
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
@@ -102,55 +104,63 @@ export function FrameEditModal({
         <h2 id="frame-edit-title" className="text-gray-900 font-bold mb-1">
           Edit frame
         </h2>
-        <p className="text-xs text-gray-500 mb-4">
+        <p className="text-sm text-gray-500 mb-4">
           Manual QA correction for frame #{frame.frameLogId}. Changes apply to this session only.
         </p>
 
-        <label className="block text-xs font-semibold text-gray-600 mb-1">Face detected</label>
-        <select
-          value={faceMode}
-          onChange={(e) => setFaceMode(e.target.value as "yes" | "no" | "unknown")}
-          className={`${inputClass} mb-3`}
-          disabled={saving}
-        >
-          <option value="yes">Yes</option>
-          <option value="no">No</option>
-          <option value="unknown">Unknown</option>
-        </select>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm text-gray-700 mb-1.5 font-semibold">Face detected</label>
+            <select
+              value={faceMode}
+              onChange={(e) => setFaceMode(e.target.value as "yes" | "no" | "unknown")}
+              className={inputClass}
+              disabled={saving}
+            >
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+              <option value="unknown">Unknown</option>
+            </select>
+          </div>
 
-        <label className="block text-xs font-semibold text-gray-600 mb-1">
-          Confidence (0–1)
-        </label>
-        <input
-          type="number"
-          min={0}
-          max={1}
-          step="0.01"
-          value={confidence}
-          onChange={(e) => setConfidence(e.target.value)}
-          className={`${inputClass} mb-3`}
-          disabled={saving}
-          placeholder="e.g. 0.85"
-        />
+          <div>
+            <label className="block text-sm text-gray-700 mb-1.5 font-semibold">
+              Confidence (0–1)
+            </label>
+            <input
+              type="number"
+              min={0}
+              max={1}
+              step="0.01"
+              value={confidence}
+              onChange={(e) => setConfidence(e.target.value)}
+              className={inputClass}
+              disabled={saving}
+              placeholder="e.g. 0.85"
+            />
+          </div>
 
-        <label className="block text-xs font-semibold text-gray-600 mb-1">
-          Hedonic score (1–9)
-        </label>
-        <input
-          type="number"
-          min={1}
-          max={9}
-          step="0.1"
-          value={hedonic}
-          onChange={(e) => setHedonic(e.target.value)}
-          className={`${inputClass} mb-3`}
-          disabled={saving}
-          placeholder="e.g. 6.5"
-        />
+          <div>
+            <label className="block text-sm text-gray-700 mb-1.5 font-semibold">
+              Hedonic score (1–9)
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={9}
+              step="0.1"
+              value={hedonic}
+              onChange={(e) => setHedonic(e.target.value)}
+              className={inputClass}
+              disabled={saving}
+              placeholder="e.g. 6.5"
+            />
+          </div>
+        </div>
 
-        {displayError ? <p className="text-xs text-red-600 mb-3">{displayError}</p> : null}
+        {displayError ? <p className="text-xs text-red-600 mt-3">{displayError}</p> : null}
 
-        <div className="flex gap-3 mt-2">
+        <div className="flex gap-3 mt-5">
           <button
             type="button"
             onClick={onClose}
@@ -161,8 +171,12 @@ export function FrameEditModal({
           </button>
           <button
             type="submit"
-            disabled={saving}
-            className="flex-1 bg-[#e8174a] hover:bg-[#c91440] text-white py-2 rounded-md text-sm font-semibold transition-colors disabled:opacity-60"
+            disabled={!canSubmit}
+            className={`flex-1 py-2 rounded-md text-sm font-semibold transition-colors ${
+              canSubmit
+                ? "bg-[#e8174a] hover:bg-[#c9143f] text-white"
+                : "bg-gray-200 text-gray-400 cursor-not-allowed"
+            }`}
           >
             {saving ? "Saving…" : "Save"}
           </button>
