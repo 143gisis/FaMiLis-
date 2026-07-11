@@ -250,10 +250,10 @@ export default function AdminUsers() {
       ) : null}
 
       <main className="px-6 py-8">
-        <div className="max-w-5xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           <PageTitle
             title="Users"
-            subtitle="Manage operator and tester accounts, roles, and passwords."
+            subtitle="Manage admin, staff, and tester accounts. Their details, roles and passwords can be changed here."
             hideBack
           />
 
