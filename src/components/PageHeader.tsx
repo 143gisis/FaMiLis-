@@ -253,7 +253,7 @@ export function PageHeader({
           {!collapsed ? (
             <div className="text-left min-w-0">
               <span className="text-white text-xl sm:text-2xl font-bold tracking-wide leading-none block truncate">
-                FaMiLis
+                FaMiLIS
               </span>
               <span className="text-[#f2c2c9] text-[12px] sm:text-[13px] font-semibold leading-tight block mt-0.5 truncate">
                 Food Testing Hub
