@@ -1,3 +1,5 @@
+import { InfoTip } from "../InfoTip";
+
 type SessionContinuationCardProps = {
   productName: string;
   isTester: boolean;
@@ -37,7 +39,10 @@ export function SessionContinuationCard({
         Product: <span className="font-semibold text-gray-700">{productName}</span>
       </p>
 
-      <p className="text-sm text-gray-700 font-semibold mt-6">What would you like to do next?</p>
+      <p className="text-sm text-gray-700 font-semibold mt-6 inline-flex items-center justify-center gap-1.5">
+        What would you like to do next?
+        <InfoTip term="sessionContinuation" />
+      </p>
 
       {actionError ? (
         <div className="mt-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
