@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { PageHeader, PageTitle } from "../components/PageHeader";
+import { InfoTip } from "../components/InfoTip";
 import { apiFetch, setToken } from "../lib/api";
 import { getStoredRole, isAdminRole } from "../RequireAuth";
 
@@ -444,9 +445,12 @@ export default function Setup() {
               {/* Participant */}
               <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm text-gray-700 font-semibold">
-                    Participant Label / ID <span className="text-[#e8174a]">*</span>
-                  </label>
+                  <div className="inline-flex items-center gap-1.5">
+                    <label className="text-sm text-gray-700 font-semibold">
+                      Participant Label / ID <span className="text-[#e8174a]">*</span>
+                    </label>
+                    <InfoTip term="participantLabel" align="left" />
+                  </div>
                   {isParticipantLocked ? (
                     <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#fde8ed] text-[#c9143f]">
                       From participant profile
@@ -547,7 +551,10 @@ export default function Setup() {
               {/* Booth handoff — admin/staff only */}
               {isAdmin && (
                 <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                  <p className="text-sm text-gray-700 font-semibold mb-0.5">Booth Handoff</p>
+                  <p className="text-sm text-gray-700 font-semibold mb-0.5 inline-flex items-center gap-1.5">
+                    Booth Handoff
+                    <InfoTip term="boothHandoff" align="left" />
+                  </p>
                   <p className="text-[11px] text-gray-500 mb-3">
                     Enter participant login to start the session and switch accounts automatically.
                   </p>
