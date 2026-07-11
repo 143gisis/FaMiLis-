@@ -36,6 +36,9 @@ Default seed (from `server/init.js` after a normal server start):
 | Name (fictional role) | Position        | Email               | Password  | App role |
 |----------------------|-----------------|---------------------|-----------|----------|
 | Alex R. Mendoza      | Lab coordinator | admin@familis.com   | admin123  | admin    |
+| Booth participant    | Test subject    | tester@familis.com  | tester123 | tester   |
+
+The **tester** role is locked to the consent gate, live session, and survey only. Testers cannot reach the dashboard, setup, or session detail; direct URLs redirect them back to consent. Admin and staff keep full access.
 
 Optional additional accounts (run `demo_kit/optional_demo_users.sql` if you want two logins for narration):
 
@@ -106,10 +109,12 @@ Session platform: **in-person booth** with tablet/laptop camera. Adjust dates in
 
 **Steps:**
 
-1. On the **Session** (**Camera Recording**) page, recording is already active after setup; keep the participant framed reasonably if face detection is part of the story.
-2. *(Optional narrative)* If the FastAPI emotion service is running, the **FER (live)** panel shows hedonic/confidence; if offline, frames may still save with empty scores.
-3. Use **Pause recording** / **Resume recording** as needed; click **Stop recording**, confirm in the dialog (stopping navigates to the **Survey** page).
-4. Complete the **Survey** on the page you are routed to after stop.
+1. On the **Session** (**Camera Recording**) page, recording **starts paused** — click **Start recording** (or **Resume recording**) when the participant is ready; keep them framed reasonably if face detection is part of the story.
+2. Confirm the timer stays at `00:00` until recording is resumed; no frame uploads should appear in the network tab while paused.
+3. *(Optional narrative)* If the FastAPI emotion service is running, the **FER (live)** panel shows hedonic/confidence after recording starts; if offline, resume stays blocked until the service is up.
+4. Use **Pause recording** / **Resume recording** as needed; switch tabs briefly to confirm auto-pause (manual resume required when returning).
+5. Click **Stop recording**, confirm in the dialog (stopping navigates to the **Survey** page).
+6. Complete the **Survey** on the page you are routed to after stop.
 5. Enter **five ratings** on the **1–9** hedonic scale (example set for a “positive” story: Color 8, Flavor/aroma 8, Salt–sweet 7, Texture 8, Overall 8) and optional remarks: *“Pleasant mango note; would buy again.”*
 6. Submit the survey.
 
@@ -147,6 +152,38 @@ Session platform: **in-person booth** with tablet/laptop camera. Adjust dates in
 4. Export or capture **Stats** views for a meeting pack (PDF or slides).
 
 **Talking point:** Recommendations are **human interpretation** of charts; the app does not output hiring or policy rules like the sample CARGO kit.
+
+---
+
+### Scenario 6 — Tester locked flow: consent gate to survey (Phase 1)
+
+**Situation:** A booth participant logs in on the kiosk after the operator has prepared a session. The tester should only see consent, the live session, and the survey.
+
+**Steps:**
+
+1. As admin, run **Setup** and start a session (Scenario 2); this stores the active session on the booth machine.
+2. Log out, then log in as **tester@familis.com** / **tester123**.
+3. Confirm the app lands on the full-screen **Consent** page, not the dashboard.
+4. Try opening `http://localhost:5173/dashboard` directly; confirm the tester is redirected back to consent.
+5. Check the dedicated **facial recording** box and the remaining consent items, then click **I Agree, Continue to Session**.
+6. Record, stop, and submit the survey as in Scenario 3.
+
+**Verification:** A `consent` row exists for the session (device ID, timestamp, `facial_recording = 1`). The tester never reaches admin pages.
+
+---
+
+### Scenario 7 — Invalidate a session (Phase 1, admin only)
+
+**Situation:** A session was run with a mistaken participant label and should be flagged for deletion without removing it immediately.
+
+**Steps:**
+
+1. Log in as **admin@familis.com**.
+2. Open **Session detail** for the session.
+3. Click **Invalidate**, confirm in the dialog.
+4. Confirm an **Invalidated** badge appears and the action is disabled afterward.
+
+**Verification:** `sessions.invalidated_at` is set and `retention_status = 'pending_deletion'`. New frame uploads to that session are rejected. Actual file cleanup is deferred to the Phase 4 retention job.
 
 ---
 
