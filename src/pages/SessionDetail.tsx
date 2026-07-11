@@ -523,19 +523,9 @@ export default function SessionDetail() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f6f7fb]" style={{ fontFamily: "'Montserrat', sans-serif" }}>
-      <PageHeader />
+    <PageHeader variant="collapsed" backLabel="Back to Dashboard" backTo="/dashboard">
       <main className="px-6 py-8">
         <div className="max-w-6xl mx-auto">
-          <button
-            type="button"
-            onClick={() => navigate("/dashboard")}
-            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-4 text-sm transition-colors"
-          >
-            <span aria-hidden="true">←</span>
-            Back to Dashboard
-          </button>
-
           {loading && !content ? (
             <div className="text-center text-gray-600 text-sm">Loading session details…</div>
           ) : error && !content ? (
@@ -1010,7 +1000,7 @@ export default function SessionDetail() {
           </div>
         </div>
       ) : null}
-    </div>
+    </PageHeader>
   );
 }
 
