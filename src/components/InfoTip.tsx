@@ -54,12 +54,14 @@ export function InfoTip({ term, className = "", align = "center" }: InfoTipProps
         : "left-1/2 -translate-x-1/2";
 
   return (
-    // normal-case/tracking-normal/not-italic guard against ancestor labels (e.g. an
-    // ALL-CAPS, letter-spaced section title) leaking their text-transform / letter-spacing
-    // into the trigger or popover, since both are inherited CSS properties.
+    // normal-case/tracking-normal/not-italic/font-normal guard against ancestor labels (e.g. an
+    // ALL-CAPS, letter-spaced, bold/semibold section title) leaking their text-transform,
+    // letter-spacing, font-style, or font-weight into the trigger or popover, since all of
+    // these are inherited CSS properties. The title/body below re-assert their own explicit
+    // weight so the popover's type hierarchy stays consistent regardless of where it's used.
     <span
       ref={wrapperRef}
-      className={`relative inline-flex normal-case tracking-normal not-italic ${className}`}
+      className={`relative inline-flex normal-case tracking-normal not-italic font-normal ${className}`}
     >
       <button
         ref={buttonRef}
@@ -76,10 +78,12 @@ export function InfoTip({ term, className = "", align = "center" }: InfoTipProps
       {open ? (
         <div
           role="tooltip"
-          className={`absolute z-50 top-full mt-1.5 w-56 sm:w-64 bg-white border border-gray-200 rounded-md shadow-lg p-3 text-left normal-case tracking-normal not-italic ${alignClasses}`}
+          className={`absolute z-50 top-full mt-1.5 w-56 sm:w-64 bg-white border border-gray-200 rounded-md shadow-lg p-3 text-left normal-case tracking-normal not-italic font-normal ${alignClasses}`}
         >
           <p className="text-xs font-semibold text-gray-900 normal-case tracking-normal mb-1">{entry.title}</p>
-          <p className="text-[11px] text-gray-600 normal-case tracking-normal leading-relaxed">{entry.body}</p>
+          <p className="text-[11px] font-normal text-gray-600 normal-case tracking-normal leading-relaxed">
+            {entry.body}
+          </p>
         </div>
       ) : null}
     </span>
