@@ -9,7 +9,9 @@ interface PageHeaderProps {
 export function PageHeader({ onLogoClick }: PageHeaderProps) {
   const navigate = useNavigate();
   const handleLogo = onLogoClick ?? (() => navigate("/dashboard"));
-  const canSeeParticipants = isAdminRole(getStoredRole());
+  const role = getStoredRole();
+  const canSeeParticipants = isAdminRole(role);
+  const canSeeUsers = role === "admin";
 
   return (
     <header className="bg-[#e8174a] text-white">
@@ -32,6 +34,15 @@ export function PageHeader({ onLogoClick }: PageHeaderProps) {
         </button>
 
         <nav className="flex items-center gap-2 sm:gap-3">
+          {canSeeUsers ? (
+            <button
+              type="button"
+              onClick={() => navigate("/admin/users")}
+              className="bg-white/15 hover:bg-white/25 text-white border border-white/30 transition-colors px-3 py-1.5 sm:px-4 sm:py-2 rounded-md text-sm font-semibold"
+            >
+              Users
+            </button>
+          ) : null}
           {canSeeParticipants ? (
             <button
               type="button"

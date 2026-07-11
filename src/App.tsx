@@ -11,6 +11,7 @@ import Survey from "./pages/Survey";
 import Consent from "./pages/Consent";
 import Participants from "./pages/Participants";
 import ParticipantDetail from "./pages/ParticipantDetail";
+import AdminUsers from "./pages/AdminUsers";
 
 export default function App() {
   return (
@@ -25,6 +26,11 @@ export default function App() {
             <Route path="/session-detail" element={<SessionDetail />} />
             <Route path="/participants" element={<Participants />} />
             <Route path="/participants/:id" element={<ParticipantDetail />} />
+          </Route>
+
+          {/* Exact admin only: user management (no staff alias) */}
+          <Route element={<RequireRole allowed={["admin"]} exact />}>
+            <Route path="/admin/users" element={<AdminUsers />} />
           </Route>
 
           {/* Tester: consent gate only */}

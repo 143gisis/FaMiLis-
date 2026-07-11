@@ -3,20 +3,24 @@ import { getStoredRole, isAdminRole, testerLandingPath, type UserRole } from "./
 
 interface RequireRoleProps {
   allowed: UserRole[];
+  /** When true, do not treat staff as admin. Use for /admin/users. */
+  exact?: boolean;
 }
 
 /**
- * Route guard that renders child routes only for the allowed roles. `staff` is
- * accepted wherever `admin` is allowed. Unauthorized roles are redirected to the
+ * Route guard that renders child routes only for the allowed roles. By default
+ * `staff` is accepted wherever `admin` is allowed. Pass `exact` to disable that
+ * alias (admin-only user management). Unauthorized roles are redirected to the
  * landing page for their own role rather than being shown a dead end.
  */
-export default function RequireRole({ allowed }: RequireRoleProps) {
+export default function RequireRole({ allowed, exact = false }: RequireRoleProps) {
   const role = getStoredRole();
   if (!role) {
     return <Navigate to="/" replace />;
   }
 
-  const permitted = allowed.includes(role) || (allowed.includes("admin") && role === "staff");
+  const permitted =
+    allowed.includes(role) || (!exact && allowed.includes("admin") && role === "staff");
   if (permitted) {
     return <Outlet />;
   }
