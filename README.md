@@ -7,8 +7,8 @@ FaMiLis is a food testing prototype that combines session-based camera capture, 
 - Food management with add/edit/delete and optional image upload per product.
 - Participant registry UI (list + detail with session history); label/ID, optional age and gender.
 - Session lifecycle: start, stop, status update, delete; admin can invalidate a session (retention fields).
-- Tester consent gate before live capture; survey on a strict 1-9 scale (5 attributes + remarks).
-- Session detail: frame logs, list/folder gallery by time buckets, survey summary, status controls.
+- Tester (booth) consent gate before live capture; survey on a strict 1-9 scale (5 attributes + remarks).
+- Session detail: frame logs, list/folder gallery by time buckets, edit/delete frames, survey summary, status controls.
 - CSV/XLSX export for food analytics and session detail (admin/staff).
 - Admin user management at `/admin/users` (create/edit, role, password, deactivate).
 - Analytics dashboard with confidence/hedonic charts, attribute radar, timeline, session-over-session trend, demographics, and empty-data guards.
