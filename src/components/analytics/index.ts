@@ -5,6 +5,8 @@ export { ColoredRatingBar } from "./ColoredRatingBar";
 export { InsightCard } from "./InsightCard";
 export { ProfileCard } from "./ProfileCard";
 export { TabButton } from "./TabButton";
+export { StatsCategoryRibbon } from "./StatsCategoryRibbon";
+export type { StatsCategory } from "./StatsCategoryRibbon";
 export { HeroHedonicCard } from "./HeroHedonicCard";
 export { FerConfidenceCard } from "./FerConfidenceCard";
 export { SessionTrendChart } from "./SessionTrendChart";
