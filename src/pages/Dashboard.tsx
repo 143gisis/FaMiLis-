@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { API_BASE, apiFetch } from "../lib/api";
 import { getStoredRole, isAdminRole } from "../RequireAuth";
 import { PageHeader } from "../components/PageHeader";
@@ -157,9 +157,11 @@ function formatDate(iso: string | null) {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const canExport = isAdminRole(getStoredRole());
 
-  const [tab, setTab] = useState<TabKey>("food");
+  const tabFromUrl = searchParams.get("tab") === "stats" ? "stats" : "food";
+  const [tab, setTab] = useState<TabKey>(tabFromUrl);
   const [statsCategory, setStatsCategory] = useState<StatsCategory>("overall");
   const [foods, setFoods] = useState<Food[]>([]);
   const [expandedFoodId, setExpandedFoodId] = useState<number | null>(null);
@@ -196,6 +198,19 @@ export default function Dashboard() {
 
   const foodsAbortRef = useRef<AbortController | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setTab(tabFromUrl);
+  }, [tabFromUrl]);
+
+  function selectTab(next: TabKey) {
+    setTab(next);
+    if (next === "stats") {
+      setSearchParams({ tab: "stats" }, { replace: true });
+    } else {
+      setSearchParams({}, { replace: true });
+    }
+  }
 
   useEffect(() => {
     foodsAbortRef.current?.abort();
@@ -705,38 +720,33 @@ export default function Dashboard() {
   };
 
   return (
-    <div
-      className="min-h-screen bg-[#f6f7fb]"
-      style={{ fontFamily: "'Montserrat', sans-serif" }}
-    >
-      <PageHeader />
-
+    <PageHeader variant="expanded">
       <main className="px-6 py-8">
         <div className="max-w-6xl mx-auto">
-          {/* Title */}
-          <div className="text-center mb-6">
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Food Testing Hub</h1>
-            <p className="text-xs sm:text-sm text-gray-500 mt-1">Add and Manage Food for Testing</p>
-          </div>
-
-          {/* Actions */}
-          <div className="flex items-center justify-center gap-3 mb-5">
-            <button
-              type="button"
-              onClick={() => setShowAdd(true)}
-              className="inline-flex items-center gap-2 bg-[#e8174a] hover:bg-[#c9143f] text-white px-4 py-2.5 rounded-md text-sm font-semibold transition-colors"
-            >
-              <span aria-hidden="true">➕</span>
-              Add New Food
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate("/setup")}
-              className="inline-flex items-center gap-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 px-4 py-2.5 rounded-md text-sm font-semibold transition-colors"
-            >
-              <span aria-hidden="true">📷</span>
-              Camera Recording
-            </button>
+          {/* Title + actions */}
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Food Testing Hub</h1>
+              <p className="text-xs sm:text-sm text-gray-500 mt-1">Manage and statistically analyze food for testing.</p>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => navigate("/setup")}
+                className="inline-flex items-center gap-2 bg-[#e8174a] hover:bg-[#c9143f] text-white px-4 py-2.5 rounded-md text-sm font-semibold transition-colors"
+              >
+                <span aria-hidden="true">📷</span>
+                Camera Recording
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAdd(true)}
+                className="inline-flex items-center gap-2 bg-[#e8174a] hover:bg-[#c9143f] text-white px-4 py-2.5 rounded-md text-sm font-semibold transition-colors"
+              >
+                <span aria-hidden="true">➕</span>
+                Add New Food
+              </button>
+            </div>
           </div>
 
           {/* Stat cards */}
@@ -748,10 +758,10 @@ export default function Dashboard() {
 
           {/* Tabs */}
           <div className="flex rounded-md overflow-hidden border border-gray-200 bg-white mb-5">
-            <TabButton active={tab === "food"} onClick={() => setTab("food")}>
+            <TabButton active={tab === "food"} onClick={() => selectTab("food")}>
               Food Management
             </TabButton>
-            <TabButton active={tab === "stats"} onClick={() => setTab("stats")}>
+            <TabButton active={tab === "stats"} onClick={() => selectTab("stats")}>
               Statistics &amp; Analytics
             </TabButton>
           </div>
@@ -1387,7 +1397,7 @@ export default function Dashboard() {
           </div>
         </div>
       ) : null}
-    </div>
+    </PageHeader>
   );
 }
 
