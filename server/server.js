@@ -1488,6 +1488,10 @@ async function start() {
 
       const to9FromNormalized = (n) => (n == null ? null : Number(n) * 8 + 1);
       const radar = [
+        {
+          label: "Overall",
+          score: radarRow?.final_overall_rating == null ? 0 : Number(radarRow.final_overall_rating),
+        },
         { label: "Color", score: radarRow?.color_rating == null ? 0 : Number(radarRow.color_rating) },
         {
           label: "Flavor/Aroma",
@@ -1495,10 +1499,6 @@ async function start() {
         },
         { label: "Salt/Sweet", score: radarRow?.salt_sweet_rating == null ? 0 : Number(radarRow.salt_sweet_rating) },
         { label: "Texture", score: radarRow?.texture_rating == null ? 0 : Number(radarRow.texture_rating) },
-        {
-          label: "Overall",
-          score: radarRow?.final_overall_rating == null ? 0 : Number(radarRow.final_overall_rating),
-        },
       ];
 
       let timeline = [
