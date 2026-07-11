@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "server": "node ./server/server.js",
     "hash-password": "node ./scripts/hash-password.mjs",
-    "emotion-service": ".venv\\Scripts\\python.exe ./backend/emotion_service.py"
+    "emotion-service": ".venv\\Scripts\\python.exe ./backend/emotion_service.py",
+    "familis": "concurrently \"npm run dev\" \"npm run server\" \"npm run emotion-service\""
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
