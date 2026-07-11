@@ -197,9 +197,11 @@ export default function ParticipantDetail() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f6f7fb]" style={{ fontFamily: "'Montserrat', sans-serif" }}>
-      <PageHeader />
-
+    <PageHeader
+      variant="collapsed"
+      backLabel="Back to Participants"
+      backTo="/participants"
+    >
       {toast ? (
         <div className="fixed top-4 right-4 z-50 bg-green-600 text-white px-5 py-3 rounded-lg shadow-lg text-sm font-semibold">
           {toast}
@@ -211,8 +213,7 @@ export default function ParticipantDetail() {
           <PageTitle
             title={participant?.testerLabel ?? (loading ? "Loading…" : `Participant P-${participantId}`)}
             subtitle="Participant profile and session history"
-            backLabel="Back to Participants"
-            backTo="/participants"
+            hideBack
           />
 
           {loading ? (
@@ -313,6 +314,6 @@ export default function ParticipantDetail() {
           onConfirm={() => void handleDelete()}
         />
       ) : null}
-    </div>
+    </PageHeader>
   );
 }
