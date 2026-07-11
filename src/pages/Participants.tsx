@@ -178,7 +178,7 @@ export default function Participants() {
       ) : null}
 
       <main className="px-6 py-8">
-        <div className="max-w-5xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           <PageTitle
             title="Participants"
             subtitle="Manage tasting participants and open their session history."
@@ -218,13 +218,13 @@ export default function Participants() {
                 <table className="min-w-[960px] w-full text-left">
                   <thead>
                     <tr className="text-xs text-gray-500 bg-gray-50">
-                      <th className="px-4 py-3 font-semibold">Label</th>
+                      <th className="px-4 py-3 font-semibold w-8">Label</th>
                       <th className="px-4 py-3 font-semibold w-16">Age</th>
                       <th className="px-4 py-3 font-semibold w-24">Gender</th>
                       <th className="px-4 py-3 font-semibold w-28">Created</th>
                       <th className="px-4 py-3 font-semibold w-20">Sessions</th>
                       <th className="px-4 py-3 font-semibold w-14">Last Tasted Food</th>
-                      <th className="px-4 py-3 font-semibold text-right w-[1%] whitespace-nowrap">
+                      <th className="px-4 py-3 font-semibold w-[1%] whitespace-nowrap">
                         Actions
                       </th>
                     </tr>
