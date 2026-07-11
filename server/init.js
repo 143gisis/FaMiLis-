@@ -56,6 +56,13 @@ async function applyMigrations(pool) {
       `ALTER TABLE sessions ADD COLUMN retention_status ENUM('active', 'pending_deletion', 'anonymized') NOT NULL DEFAULT 'active'`
     );
   }
+
+  // users.is_active: soft-deactivate for admin user management (Phase 3).
+  if (!(await columnExists(pool, "users", "is_active"))) {
+    await pool.query(
+      `ALTER TABLE users ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1`
+    );
+  }
 }
 
 export async function initDb() {

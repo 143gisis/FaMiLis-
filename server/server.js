@@ -75,6 +75,32 @@ function requireRole(...roles) {
   };
 }
 
+/** Exact role match — no staff→admin alias. Use for admin-only user management. */
+function requireExactRole(...roles) {
+  const allowed = new Set(roles);
+  return (req, res, next) => {
+    const role = req.user?.role;
+    if (!role) return res.status(401).json({ ok: false, error: "Authentication required." });
+    if (allowed.has(role)) return next();
+    return res.status(403).json({ ok: false, error: "Insufficient permissions." });
+  };
+}
+
+const USER_ROLES = new Set(["admin", "staff", "tester"]);
+const MIN_PASSWORD_LEN = 6;
+
+function mapUserRow(row) {
+  return {
+    id: row.user_id,
+    username: row.username,
+    email: row.email,
+    role: row.role,
+    createdAt: row.created_at ?? null,
+    lastLogin: row.last_login ?? null,
+    isActive: row.is_active === 0 || row.is_active === false ? false : true,
+  };
+}
+
 async function clearEmotionHistory(sessionId) {
   try {
     await fetch(`${EMOTION_SERVICE_URL}/session/${encodeURIComponent(String(sessionId))}/history`, {
@@ -199,7 +225,7 @@ async function start() {
     try {
       const [rows] = await pool.query(
         `
-        SELECT user_id, username, email, password_hash, role
+        SELECT user_id, username, email, password_hash, role, is_active
         FROM users
         WHERE email = ?
       `,
@@ -211,6 +237,10 @@ async function start() {
       }
 
       const user = rows[0];
+      if (user.is_active === 0 || user.is_active === false) {
+        return res.status(401).json({ ok: false, error: "This account is deactivated." });
+      }
+
       const stored = user.password_hash;
 
       const isBcrypt =
@@ -237,6 +267,14 @@ async function start() {
         return res.status(401).json({ ok: false, error: "Invalid email or password." });
       }
 
+      try {
+        await pool.query("UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE user_id = ?", [
+          user.user_id,
+        ]);
+      } catch {
+        /* non-fatal */
+      }
+
       const safeUser = {
         id: user.user_id,
         username: user.username,
@@ -252,6 +290,244 @@ async function start() {
     } catch (err) {
       console.error("Login error:", err);
       return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
+  // ── Admin user management (exact admin only; no staff alias) ──────────────
+
+  app.get("/api/users", requireExactRole("admin"), async (_req, res) => {
+    try {
+      const [rows] = await pool.query(
+        `
+        SELECT user_id, username, email, role, created_at, last_login, is_active
+        FROM users
+        ORDER BY created_at DESC, user_id DESC
+      `
+      );
+      return res.json({ ok: true, users: rows.map(mapUserRow) });
+    } catch (err) {
+      console.error("GET /api/users error:", err);
+      return res.status(500).json({ ok: false, error: "Failed to load users." });
+    }
+  });
+
+  app.post("/api/users", requireExactRole("admin"), async (req, res) => {
+    const { email, username, password, role } = req.body ?? {};
+    const emailTrim = typeof email === "string" ? email.trim() : "";
+    const usernameTrim = typeof username === "string" ? username.trim() : "";
+    const passwordStr = typeof password === "string" ? password : "";
+    const roleStr = typeof role === "string" ? role.trim() : "";
+
+    if (!emailTrim || !usernameTrim || !passwordStr) {
+      return res.status(400).json({
+        ok: false,
+        error: "Email, username, and password are required.",
+      });
+    }
+    if (passwordStr.length < MIN_PASSWORD_LEN) {
+      return res.status(400).json({
+        ok: false,
+        error: `Password must be at least ${MIN_PASSWORD_LEN} characters.`,
+      });
+    }
+    if (!USER_ROLES.has(roleStr)) {
+      return res.status(400).json({
+        ok: false,
+        error: "Role must be admin, staff, or tester.",
+      });
+    }
+
+    try {
+      const passwordHash = await bcrypt.hash(passwordStr, 10);
+      const [result] = await pool.query(
+        `
+        INSERT INTO users (username, email, password_hash, role, is_active)
+        VALUES (?, ?, ?, ?, 1)
+      `,
+        [usernameTrim, emailTrim, passwordHash, roleStr]
+      );
+
+      const [rows] = await pool.query(
+        `
+        SELECT user_id, username, email, role, created_at, last_login, is_active
+        FROM users
+        WHERE user_id = ?
+      `,
+        [result.insertId]
+      );
+
+      return res.status(201).json({ ok: true, user: mapUserRow(rows[0]) });
+    } catch (err) {
+      if (err?.code === "ER_DUP_ENTRY") {
+        return res.status(409).json({ ok: false, error: "Email already in use." });
+      }
+      console.error("POST /api/users error:", err);
+      return res.status(500).json({ ok: false, error: "Failed to create user." });
+    }
+  });
+
+  app.patch("/api/users/:id", requireExactRole("admin"), async (req, res) => {
+    const userId = Number.parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(userId) || userId <= 0) {
+      return res.status(400).json({ ok: false, error: "Invalid user id." });
+    }
+
+    const body = req.body ?? {};
+    const hasRole = Object.prototype.hasOwnProperty.call(body, "role");
+    const hasIsActive = Object.prototype.hasOwnProperty.call(body, "isActive");
+    const hasPassword = Object.prototype.hasOwnProperty.call(body, "password");
+    const hasUsername = Object.prototype.hasOwnProperty.call(body, "username");
+    const hasEmail = Object.prototype.hasOwnProperty.call(body, "email");
+
+    if (!hasRole && !hasIsActive && !hasPassword && !hasUsername && !hasEmail) {
+      return res.status(400).json({
+        ok: false,
+        error: "Provide username, email, role, isActive, and/or password to update.",
+      });
+    }
+
+    const actorId = req.user?.id;
+    const isSelf = actorId != null && Number(actorId) === userId;
+
+    try {
+      const [existingRows] = await pool.query(
+        `
+        SELECT user_id, username, email, role, created_at, last_login, is_active
+        FROM users
+        WHERE user_id = ?
+      `,
+        [userId]
+      );
+      if (existingRows.length === 0) {
+        return res.status(404).json({ ok: false, error: "User not found." });
+      }
+      const existing = existingRows[0];
+
+      let nextUsername = existing.username;
+      if (hasUsername) {
+        const usernameTrim = typeof body.username === "string" ? body.username.trim() : "";
+        if (!usernameTrim) {
+          return res.status(400).json({ ok: false, error: "Username is required." });
+        }
+        nextUsername = usernameTrim;
+      }
+
+      let nextEmail = existing.email;
+      if (hasEmail) {
+        const emailTrim = typeof body.email === "string" ? body.email.trim() : "";
+        if (!emailTrim) {
+          return res.status(400).json({ ok: false, error: "Email is required." });
+        }
+        nextEmail = emailTrim;
+      }
+
+      let nextRole = existing.role;
+      if (hasRole) {
+        const roleStr = typeof body.role === "string" ? body.role.trim() : "";
+        if (!USER_ROLES.has(roleStr)) {
+          return res.status(400).json({
+            ok: false,
+            error: "Role must be admin, staff, or tester.",
+          });
+        }
+        if (isSelf && roleStr !== "admin") {
+          return res.status(400).json({
+            ok: false,
+            error: "You cannot change your own role.",
+          });
+        }
+        nextRole = roleStr;
+      }
+
+      let nextActive = existing.is_active === 0 || existing.is_active === false ? 0 : 1;
+      if (hasIsActive) {
+        if (typeof body.isActive !== "boolean") {
+          return res.status(400).json({ ok: false, error: "isActive must be a boolean." });
+        }
+        if (isSelf && body.isActive === false) {
+          return res.status(400).json({
+            ok: false,
+            error: "You cannot deactivate your own account.",
+          });
+        }
+        nextActive = body.isActive ? 1 : 0;
+      }
+
+      // Block demoting/deactivating the last active admin.
+      const wasActiveAdmin =
+        existing.role === "admin" && !(existing.is_active === 0 || existing.is_active === false);
+      const willBeActiveAdmin = nextRole === "admin" && nextActive === 1;
+      if (wasActiveAdmin && !willBeActiveAdmin) {
+        const [adminCountRows] = await pool.query(
+          `
+          SELECT COUNT(*) AS n
+          FROM users
+          WHERE role = 'admin' AND is_active = 1 AND user_id != ?
+        `,
+          [userId]
+        );
+        if (Number(adminCountRows[0]?.n ?? 0) < 1) {
+          return res.status(400).json({
+            ok: false,
+            error: "Cannot remove the last active admin.",
+          });
+        }
+      }
+
+      let passwordHash = null;
+      if (hasPassword) {
+        const passwordStr = typeof body.password === "string" ? body.password : "";
+        if (!passwordStr || passwordStr.length < MIN_PASSWORD_LEN) {
+          return res.status(400).json({
+            ok: false,
+            error: `Password must be at least ${MIN_PASSWORD_LEN} characters.`,
+          });
+        }
+        passwordHash = await bcrypt.hash(passwordStr, 10);
+      }
+
+      const sets = [];
+      const params = [];
+      if (hasUsername) {
+        sets.push("username = ?");
+        params.push(nextUsername);
+      }
+      if (hasEmail) {
+        sets.push("email = ?");
+        params.push(nextEmail);
+      }
+      if (hasRole) {
+        sets.push("role = ?");
+        params.push(nextRole);
+      }
+      if (hasIsActive) {
+        sets.push("is_active = ?");
+        params.push(nextActive);
+      }
+      if (passwordHash) {
+        sets.push("password_hash = ?");
+        params.push(passwordHash);
+      }
+      params.push(userId);
+
+      await pool.query(`UPDATE users SET ${sets.join(", ")} WHERE user_id = ?`, params);
+
+      const [rows] = await pool.query(
+        `
+        SELECT user_id, username, email, role, created_at, last_login, is_active
+        FROM users
+        WHERE user_id = ?
+      `,
+        [userId]
+      );
+
+      return res.json({ ok: true, user: mapUserRow(rows[0]) });
+    } catch (err) {
+      if (err?.code === "ER_DUP_ENTRY") {
+        return res.status(409).json({ ok: false, error: "Email already in use." });
+      }
+      console.error("PATCH /api/users/:id error:", err);
+      return res.status(500).json({ ok: false, error: "Failed to update user." });
     }
   });
 
@@ -1177,6 +1453,88 @@ async function start() {
         console.warn("Timeline query not supported, using zeros:", err?.message ?? err);
       }
 
+      // Phase 2: per-aspect stats (mean, stdDev, n) for the survey attributes.
+      const [[aspectRow]] = await pool.query(
+        `
+        SELECT
+          COUNT(sr.color_rating) AS color_n,
+          AVG(sr.color_rating) AS color_mean,
+          STDDEV_SAMP(sr.color_rating) AS color_stddev,
+          COUNT(sr.flavor_aroma_rating) AS flavor_aroma_n,
+          AVG(sr.flavor_aroma_rating) AS flavor_aroma_mean,
+          STDDEV_SAMP(sr.flavor_aroma_rating) AS flavor_aroma_stddev,
+          COUNT(sr.salt_sweet_rating) AS salt_sweet_n,
+          AVG(sr.salt_sweet_rating) AS salt_sweet_mean,
+          STDDEV_SAMP(sr.salt_sweet_rating) AS salt_sweet_stddev,
+          COUNT(sr.texture_rating) AS texture_n,
+          AVG(sr.texture_rating) AS texture_mean,
+          STDDEV_SAMP(sr.texture_rating) AS texture_stddev,
+          COUNT(sr.final_overall_rating) AS overall_n,
+          AVG(sr.final_overall_rating) AS overall_mean,
+          STDDEV_SAMP(sr.final_overall_rating) AS overall_stddev
+        FROM survey_results sr
+        INNER JOIN sessions s ON s.session_id = sr.session_id
+        WHERE s.food_id = ?
+      `,
+        [foodId]
+      );
+
+      const toAspectStat = (mean, stddev, n) => ({
+        mean: mean == null ? 0 : Number(mean),
+        stdDev: stddev == null ? 0 : Number(stddev),
+        n: Number(n ?? 0),
+      });
+
+      const aspectStats = {
+        color: toAspectStat(aspectRow?.color_mean, aspectRow?.color_stddev, aspectRow?.color_n),
+        flavorAroma: toAspectStat(
+          aspectRow?.flavor_aroma_mean,
+          aspectRow?.flavor_aroma_stddev,
+          aspectRow?.flavor_aroma_n
+        ),
+        saltSweet: toAspectStat(aspectRow?.salt_sweet_mean, aspectRow?.salt_sweet_stddev, aspectRow?.salt_sweet_n),
+        texture: toAspectStat(aspectRow?.texture_mean, aspectRow?.texture_stddev, aspectRow?.texture_n),
+        overall: toAspectStat(aspectRow?.overall_mean, aspectRow?.overall_stddev, aspectRow?.overall_n),
+      };
+
+      // Phase 2: session-over-time trends — one row per completed survey, ordered by session start.
+      const [trendRows] = await pool.query(
+        `
+        SELECT
+          s.session_id,
+          s.start_time,
+          sr.color_rating,
+          sr.flavor_aroma_rating,
+          sr.salt_sweet_rating,
+          sr.texture_rating,
+          sr.final_overall_rating,
+          fer.mean_hedonic
+        FROM survey_results sr
+        INNER JOIN sessions s ON s.session_id = sr.session_id
+        LEFT JOIN (
+          SELECT session_id, AVG(hedonic_score) AS mean_hedonic
+          FROM frame_logs
+          WHERE hedonic_score IS NOT NULL
+          GROUP BY session_id
+        ) fer ON fer.session_id = s.session_id
+        WHERE s.food_id = ?
+        ORDER BY s.start_time ASC
+      `,
+        [foodId]
+      );
+
+      const sessionTrends = (trendRows ?? []).map((r) => ({
+        sessionId: Number(r.session_id),
+        sessionDate: toIsoOrNull(r.start_time),
+        overallRating: r.final_overall_rating == null ? null : Number(r.final_overall_rating),
+        color: r.color_rating == null ? null : Number(r.color_rating),
+        flavorAroma: r.flavor_aroma_rating == null ? null : Number(r.flavor_aroma_rating),
+        saltSweet: r.salt_sweet_rating == null ? null : Number(r.salt_sweet_rating),
+        texture: r.texture_rating == null ? null : Number(r.texture_rating),
+        // hedonic_score is normalized 0..1 in frame_logs; map to 1..9 for UI consistency.
+        meanFerHedonic: r.mean_hedonic == null ? null : Number(r.mean_hedonic) * 8 + 1,
+      }));
+
       const [ageRows] = await pool.query(
         `
         SELECT
@@ -1247,10 +1605,93 @@ async function start() {
           sessionCount,
           frameLogCount: totalCount,
           surveyCount,
+          aspectStats,
+          sessionTrends,
         },
       });
     } catch (err) {
       console.error("GET /api/foods/:foodId/analytics error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
+  // Phase 2: flat export rows for a food product (client builds CSV/XLSX from this JSON).
+  app.get("/api/foods/:foodId/export", requireRole("admin", "staff"), async (req, res) => {
+    const foodId = Number.parseInt(req.params.foodId, 10);
+    if (!Number.isFinite(foodId)) {
+      return res.status(400).json({ ok: false, error: "Invalid foodId." });
+    }
+
+    try {
+      const [[foodRow]] = await pool.query(
+        `SELECT food_id, name, category FROM food_products WHERE food_id = ? LIMIT 1`,
+        [foodId]
+      );
+      if (!foodRow) {
+        return res.status(404).json({ ok: false, error: "Food not found." });
+      }
+
+      const [rows] = await pool.query(
+        `
+        SELECT
+          s.session_id,
+          s.status,
+          s.start_time,
+          s.end_time,
+          p.tester_label,
+          p.age,
+          p.gender,
+          (SELECT COUNT(*) FROM frame_logs fl WHERE fl.session_id = s.session_id) AS frame_count,
+          sr.color_rating,
+          sr.flavor_aroma_rating,
+          sr.salt_sweet_rating,
+          sr.texture_rating,
+          sr.final_overall_rating,
+          sr.remarks
+        FROM sessions s
+        LEFT JOIN participants p ON p.participant_id = s.participant_id
+        LEFT JOIN survey_results sr ON sr.session_id = s.session_id
+        WHERE s.food_id = ?
+        ORDER BY s.start_time ASC
+      `,
+        [foodId]
+      );
+
+      const sessions = rows.map((r) => ({
+        sessionId: Number(r.session_id),
+        status: r.status,
+        startTime: toIsoOrNull(r.start_time),
+        endTime: toIsoOrNull(r.end_time),
+        participantLabel: r.tester_label == null ? null : String(r.tester_label),
+        participantAge: r.age == null ? null : Number(r.age),
+        participantGender: r.gender == null ? null : String(r.gender),
+        frameCount: Number(r.frame_count ?? 0),
+        hasSurvey: r.final_overall_rating != null,
+      }));
+
+      const surveys = rows
+        .filter((r) => r.final_overall_rating != null)
+        .map((r) => ({
+          sessionId: Number(r.session_id),
+          participantLabel: r.tester_label == null ? null : String(r.tester_label),
+          age: r.age == null ? null : Number(r.age),
+          gender: r.gender == null ? null : String(r.gender),
+          colorRating: r.color_rating == null ? null : Number(r.color_rating),
+          flavorAromaRating: r.flavor_aroma_rating == null ? null : Number(r.flavor_aroma_rating),
+          saltSweetRating: r.salt_sweet_rating == null ? null : Number(r.salt_sweet_rating),
+          textureRating: r.texture_rating == null ? null : Number(r.texture_rating),
+          finalOverallRating: Number(r.final_overall_rating),
+          remarks: r.remarks == null ? null : String(r.remarks),
+        }));
+
+      return res.json({
+        ok: true,
+        food: { id: Number(foodRow.food_id), name: String(foodRow.name), category: String(foodRow.category ?? "") },
+        sessions,
+        surveys,
+      });
+    } catch (err) {
+      console.error("GET /api/foods/:foodId/export error:", err);
       return res.status(500).json({ ok: false, error: "Server error." });
     }
   });
@@ -1732,6 +2173,106 @@ async function start() {
       });
     } catch (err) {
       console.error("GET /api/sessions/:sessionId/details error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
+  // Phase 2: single-session export — meta, survey, and frame aggregates (summary-only, no per-frame rows).
+  app.get("/api/sessions/:sessionId/export", requireRole("admin", "staff"), async (req, res) => {
+    const sessionId = Number.parseInt(req.params.sessionId, 10);
+    if (!Number.isFinite(sessionId)) {
+      return res.status(400).json({ ok: false, error: "Invalid sessionId." });
+    }
+
+    try {
+      const [[sessionRow]] = await pool.query(
+        `
+        SELECT
+          s.session_id,
+          s.status,
+          s.start_time,
+          s.end_time,
+          fp.name AS food_name,
+          fp.category AS food_category,
+          p.tester_label,
+          p.age,
+          p.gender
+        FROM sessions s
+        LEFT JOIN food_products fp ON fp.food_id = s.food_id
+        LEFT JOIN participants p ON p.participant_id = s.participant_id
+        WHERE s.session_id = ?
+        LIMIT 1
+      `,
+        [sessionId]
+      );
+
+      if (!sessionRow) {
+        return res.status(404).json({ ok: false, error: "Session not found." });
+      }
+
+      const [[surveyRow]] = await pool.query(
+        `
+        SELECT color_rating, flavor_aroma_rating, salt_sweet_rating, texture_rating, final_overall_rating, remarks
+        FROM survey_results
+        WHERE session_id = ?
+        LIMIT 1
+      `,
+        [sessionId]
+      );
+
+      const [[frameRow]] = await pool.query(
+        `
+        SELECT
+          COUNT(*) AS total_frames,
+          AVG(confidence_score) AS mean_confidence,
+          AVG(hedonic_score) AS mean_hedonic,
+          SUM(CASE WHEN face_detected = 1 THEN 1 ELSE 0 END) AS face_detected_count,
+          SUM(CASE WHEN (hedonic_score * 8 + 1) >= 7 THEN 1 ELSE 0 END) AS positive_count,
+          SUM(CASE WHEN (hedonic_score * 8 + 1) >= 5 AND (hedonic_score * 8 + 1) < 7 THEN 1 ELSE 0 END) AS neutral_count,
+          SUM(CASE WHEN (hedonic_score * 8 + 1) < 5 THEN 1 ELSE 0 END) AS negative_count
+        FROM frame_logs
+        WHERE session_id = ?
+      `,
+        [sessionId]
+      );
+
+      return res.json({
+        ok: true,
+        session: {
+          id: Number(sessionRow.session_id),
+          status: sessionRow.status,
+          startTime: toIsoOrNull(sessionRow.start_time),
+          endTime: toIsoOrNull(sessionRow.end_time),
+          foodName: sessionRow.food_name == null ? null : String(sessionRow.food_name),
+          foodCategory: sessionRow.food_category == null ? null : String(sessionRow.food_category),
+          participantLabel: sessionRow.tester_label == null ? null : String(sessionRow.tester_label),
+          participantAge: sessionRow.age == null ? null : Number(sessionRow.age),
+          participantGender: sessionRow.gender == null ? null : String(sessionRow.gender),
+        },
+        survey: surveyRow
+          ? {
+              colorRating: surveyRow.color_rating == null ? null : Number(surveyRow.color_rating),
+              flavorAromaRating:
+                surveyRow.flavor_aroma_rating == null ? null : Number(surveyRow.flavor_aroma_rating),
+              saltSweetRating: surveyRow.salt_sweet_rating == null ? null : Number(surveyRow.salt_sweet_rating),
+              textureRating: surveyRow.texture_rating == null ? null : Number(surveyRow.texture_rating),
+              finalOverallRating:
+                surveyRow.final_overall_rating == null ? null : Number(surveyRow.final_overall_rating),
+              remarks: surveyRow.remarks == null ? null : String(surveyRow.remarks),
+            }
+          : null,
+        frameSummary: {
+          totalFrames: Number(frameRow?.total_frames ?? 0),
+          meanConfidence: frameRow?.mean_confidence == null ? null : Number(frameRow.mean_confidence),
+          meanHedonicOutOf9: frameRow?.mean_hedonic == null ? null : Number(frameRow.mean_hedonic) * 8 + 1,
+          faceDetectedCount: Number(frameRow?.face_detected_count ?? 0),
+          positiveCount: Number(frameRow?.positive_count ?? 0),
+          neutralCount: Number(frameRow?.neutral_count ?? 0),
+          negativeCount: Number(frameRow?.negative_count ?? 0),
+        },
+      });
+    } catch (err) {
+      console.error("GET /api/sessions/:sessionId/export error:", err);
       return res.status(500).json({ ok: false, error: "Server error." });
     }
   });
