@@ -1,3 +1,4 @@
+import { InfoTip } from "../InfoTip";
 import { clampPct } from "./utils";
 
 export function ColoredRatingBar({
@@ -6,6 +7,7 @@ export function ColoredRatingBar({
   color,
   n,
   stdDev,
+  showStatsTips = false,
 }: {
   label: string;
   rating: number | null;
@@ -14,9 +16,12 @@ export function ColoredRatingBar({
   n?: number;
   /** Standard deviation of the underlying survey scores. Shown alongside n when provided. */
   stdDev?: number;
+  /** When true, show InfoTips next to N / σ (use on the first bar only to avoid clutter). */
+  showStatsTips?: boolean;
 }) {
   const val = rating ?? 0;
   const pct = clampPct((val / 9) * 100);
+  const showStdDev = stdDev != null && n != null && n > 1;
   return (
     <div className="mb-3 last:mb-0">
       <div className="flex items-center justify-between mb-1.5">
@@ -44,9 +49,17 @@ export function ColoredRatingBar({
         />
       </div>
       {n != null ? (
-        <p className="text-[11px] text-gray-400 mt-1 tabular-nums">
-          N={n}
-          {stdDev != null && n > 1 ? ` · σ ${stdDev.toFixed(1)}` : ""}
+        <p className="text-[11px] text-gray-400 mt-1 tabular-nums inline-flex items-center gap-1 flex-wrap">
+          <span className="inline-flex items-center gap-1">
+            N={n}
+            {showStatsTips ? <InfoTip term="sampleSize" align="left" /> : null}
+          </span>
+          {showStdDev ? (
+            <span className="inline-flex items-center gap-1">
+              · σ {stdDev!.toFixed(1)}
+              {showStatsTips ? <InfoTip term="stdDev" align="left" /> : null}
+            </span>
+          ) : null}
         </p>
       ) : null}
     </div>
