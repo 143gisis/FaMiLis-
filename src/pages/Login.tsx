@@ -3,7 +3,7 @@ import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { hasStoredUser, testerLandingPath } from "../RequireAuth";
 import { setToken } from "../lib/api";
-import logo from "../assets/logo.png";
+import { PageHeader } from "../components/PageHeader";
 import loginBg from "../assets/login-bg.png";
 
 function IconMail(props: { className?: string; size?: number }) {
@@ -163,46 +163,26 @@ export default function Login() {
   };
 
   return (
-    <div
-      className="min-h-screen bg-[#f6f7fb] relative"
-      style={{
-        fontFamily: "'Montserrat', sans-serif",
-        backgroundImage: `url(${loginBg})`,
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-        backgroundRepeat: "no-repeat",
-      }}
+    <PageHeader
+      shell="minimal"
+      variant="expanded"
+      onLogoClick={() => navigate("/")}
+      logoAriaLabel="Go to home"
     >
-      <header className="bg-red-600 text-white">
-        <button
-          type="button"
-          onClick={() => navigate("/")}
-          className="h-[80px] px-8 flex items-center gap-3 text-left"
-          aria-label="Go to home"
-        >
-          <img src={logo} alt="FaMiLis logo" className="w-[50px] h-[50px] object-contain" />
-          <span className="text-white text-[24px] font-bold tracking-wide">
-            FaMiLis
-          </span>
-        </button>
-      </header>
-
-      <main
-        className="px-6 py-10"
+      <div
+        className="min-h-full relative flex items-center justify-center px-6 py-10"
         style={{
-          minHeight: "calc(100vh - 80px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
+          backgroundImage: `url(${loginBg})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
         }}
       >
         <div
           className="w-full max-w-[560px] overflow-hidden rounded-[48px] shadow-[0_20px_60px_rgba(0,0,0,0.18)]"
           style={{ backgroundColor: "#fff" }}
         >
-          <div className="bg-red-600 px-10 pt-10 pb-9 text-center">
-            <div className="flex justify-center mb-2">
-            </div>
+          <div className="bg-[#e8174a] px-10 pt-10 pb-9 text-center">
             <h2 className="text-white text-[34px] font-bold mt-2">
               Welcome Back!
             </h2>
@@ -220,7 +200,7 @@ export default function Login() {
                   style={{ fontFamily: "'Roboto', sans-serif" }}
                 >
                   <span className="inline-flex items-center gap-3">
-                    <IconMail size={20} className="text-red-600" />
+                    <IconMail size={20} className="text-[#e8174a]" />
                     Email Address
                   </span>
                 </label>
@@ -232,7 +212,7 @@ export default function Login() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="admin@familis.com"
-                  className="w-full h-[50px] px-7 border border-[#bfbfbf] rounded-[10px] text-[16px] text-black placeholder:text-[#bdb4b4] focus:outline-none focus:border-red-400"
+                  className="w-full h-[50px] px-7 border border-[#bfbfbf] rounded-[10px] text-[16px] text-black placeholder:text-[#bdb4b4] focus:outline-none focus:border-[#e8174a]/60"
                   style={{ fontFamily: "'Albert Sans', sans-serif" }}
                 />
               </div>
@@ -244,7 +224,7 @@ export default function Login() {
                   style={{ fontFamily: "'Roboto', sans-serif" }}
                 >
                   <span className="inline-flex items-center gap-3">
-                    <IconLock size={20} className="text-red-600" />
+                    <IconLock size={20} className="text-[#e8174a]" />
                     Password
                   </span>
                 </label>
@@ -255,7 +235,7 @@ export default function Login() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your password"
-                  className="w-full h-[50px] px-7 border border-[#bfbfbf] rounded-[10px] text-[16px] text-black placeholder:text-[#bdb4b4] focus:outline-none focus:border-red-400"
+                  className="w-full h-[50px] px-7 border border-[#bfbfbf] rounded-[10px] text-[16px] text-black placeholder:text-[#bdb4b4] focus:outline-none focus:border-[#e8174a]/60"
                   style={{ fontFamily: "'Albert Sans', sans-serif" }}
                 />
               </div>
@@ -269,7 +249,7 @@ export default function Login() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-red-600 text-white h-[60px] rounded-full text-[22px] font-semibold hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-3"
+                className="w-full bg-[#e8174a] text-white h-[60px] rounded-full text-[22px] font-semibold hover:bg-[#c9143f] disabled:bg-[#e8174a]/50 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-3"
               >
                 <IconLogin size={28} className="text-white" />
                 <span>{loading ? "Logging in..." : "Login"}</span>
@@ -277,7 +257,7 @@ export default function Login() {
             </form>
           </div>
         </div>
-      </main>
-    </div>
+      </div>
+    </PageHeader>
   );
 }
