@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   FAMILIS_USER_KEY,
@@ -7,11 +6,8 @@ import {
   isAdminRole,
   performLogout,
 } from "../RequireAuth";
-import logo from "../assets/logo.svg";
-
-const SIDEBAR_COLLAPSED_KEY = "familis.sidebarCollapsed";
-
-type ShellVariant = "expanded" | "collapsed";
+import { BrandStripButton } from "./shell/BrandMark";
+import { useSidebarCollapse, type ShellVariant } from "./shell/useSidebarCollapse";
 
 interface StoredUser {
   username?: string;
@@ -29,26 +25,6 @@ function getStoredUser(): StoredUser {
     };
   } catch {
     return {};
-  }
-}
-
-/** `null` means no saved preference yet. */
-function readSidebarCollapsedPreference(): boolean | null {
-  try {
-    const raw = localStorage.getItem(SIDEBAR_COLLAPSED_KEY);
-    if (raw === "1" || raw === "true") return true;
-    if (raw === "0" || raw === "false") return false;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function writeSidebarCollapsedPreference(collapsed: boolean): void {
-  try {
-    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
-  } catch {
-    /* ignore */
   }
 }
 
@@ -135,7 +111,13 @@ interface PageHeaderProps {
   children: ReactNode;
   /** Initial default when the user has not saved a sidebar preference yet. */
   variant?: ShellVariant;
+  /**
+   * `full` — admin/staff shell with nav + account footer.
+   * `minimal` — brand strip + collapse only (e.g. Login).
+   */
+  shell?: "full" | "minimal";
   onLogoClick?: () => void;
+  logoAriaLabel?: string;
   /** When set, renders a thin top bar above page content (collapsed flows). */
   backLabel?: string;
   backTo?: string;
@@ -145,7 +127,9 @@ interface PageHeaderProps {
 export function PageHeader({
   children,
   variant = "expanded",
+  shell = "full",
   onLogoClick,
+  logoAriaLabel,
   backLabel,
   backTo = "/dashboard",
   onBack,
@@ -157,31 +141,13 @@ export function PageHeader({
   const canSeeParticipants = isAdminRole(role);
   const canSeeUsers = role === "admin";
   const canSeeStaffNav = isAdminRole(role);
-  const [isNarrow, setIsNarrow] = useState(false);
-  const [savedCollapsed, setSavedCollapsed] = useState<boolean | null>(() => readSidebarCollapsedPreference());
+  const { collapsed, canToggle, toggle } = useSidebarCollapse(variant);
+  const isMinimal = shell === "minimal";
 
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
-    const sync = () => setIsNarrow(mq.matches);
-    sync();
-    mq.addEventListener("change", sync);
-    return () => mq.removeEventListener("change", sync);
-  }, []);
-
-  const preferenceCollapsed = savedCollapsed !== null ? savedCollapsed : variant === "collapsed";
-  const collapsed = isNarrow || preferenceCollapsed;
-  const canToggle = !isNarrow;
-
-  const handleLogo = onLogoClick ?? (() => navigate("/dashboard"));
+  const handleLogo =
+    onLogoClick ?? (() => navigate(isMinimal ? "/" : "/dashboard"));
   const handleBack = onBack ?? (() => navigate(backTo));
   const handleLogout = () => performLogout(navigate);
-
-  function handleToggleSidebar() {
-    if (!canToggle) return;
-    const next = !preferenceCollapsed;
-    setSavedCollapsed(next);
-    writeSidebarCollapsedPreference(next);
-  }
 
   const navItems: Array<{
     key: NavKey;
@@ -236,72 +202,56 @@ export function PageHeader({
           ${collapsed ? "w-[72px] sm:w-[88px]" : "w-[240px] sm:w-[280px] lg:w-[320px]"}
         `}
       >
-        <button
-          type="button"
+        <BrandStripButton
+          collapsed={collapsed}
           onClick={handleLogo}
-          aria-label="Go to dashboard"
-          className={`
-            bg-[#e8174a] flex items-center shrink-0
-            ${collapsed ? "justify-center h-[72px] sm:h-[80px] px-2" : "gap-3 h-[72px] sm:h-[80px] px-4 sm:px-5"}
-          `}
-        >
-          <img
-            src={logo}
-            alt=""
-            className={`object-contain brightness-0 invert ${collapsed ? "w-9 h-9" : "w-10 h-10 sm:w-11 sm:h-11"}`}
-          />
-          {!collapsed ? (
-            <div className="text-left min-w-0">
-              <span className="text-white text-xl sm:text-2xl font-bold tracking-wide leading-none block truncate">
-                FaMiLIS
-              </span>
-              <span className="text-[#f2c2c9] text-[12px] sm:text-[13px] font-semibold leading-tight block mt-0.5 truncate">
-                Food Testing Hub
-              </span>
-            </div>
-          ) : null}
-        </button>
+          ariaLabel={logoAriaLabel ?? (isMinimal ? "Go to home" : "Go to dashboard")}
+        />
 
-        <nav className={`flex-1 overflow-y-auto py-4 ${collapsed ? "px-2" : "px-3 sm:px-4"}`}>
-          <ul className="space-y-1">
-            {visibleNav.map((item) => {
-              const isActive = active === item.key;
-              const Icon = item.icon;
-              return (
-                <li key={item.key}>
-                  <NavLink
-                    to={item.to}
-                    title={item.label}
-                    className={`
-                      flex items-center rounded-md transition-colors
-                      ${collapsed ? "justify-center p-2.5" : "justify-between gap-3 px-3 py-3"}
-                      ${
-                        isActive
-                          ? "text-[#e8174a] font-semibold"
-                          : "text-gray-900 font-semibold hover:bg-gray-50"
-                      }
-                    `}
-                  >
-                    {!collapsed ? (
-                      <span className="text-[15px] sm:text-[17px] leading-snug">{item.label}</span>
-                    ) : null}
-                    <Icon
-                      className={`shrink-0 ${collapsed ? "w-6 h-6" : "w-5 h-5 sm:w-6 sm:h-6"} ${
-                        isActive ? "text-[#e8174a]" : "text-gray-800"
-                      }`}
-                    />
-                  </NavLink>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
+        {isMinimal ? (
+          <div className="flex-1" />
+        ) : (
+          <nav className={`flex-1 overflow-y-auto py-4 ${collapsed ? "px-2" : "px-3 sm:px-4"}`}>
+            <ul className="space-y-1">
+              {visibleNav.map((item) => {
+                const isActive = active === item.key;
+                const Icon = item.icon;
+                return (
+                  <li key={item.key}>
+                    <NavLink
+                      to={item.to}
+                      title={item.label}
+                      className={`
+                        flex items-center rounded-md transition-colors
+                        ${collapsed ? "justify-center p-2.5" : "justify-between gap-3 px-3 py-3"}
+                        ${
+                          isActive
+                            ? "text-[#e8174a] font-semibold"
+                            : "text-gray-900 font-semibold hover:bg-gray-50"
+                        }
+                      `}
+                    >
+                      {!collapsed ? (
+                        <span className="text-[15px] sm:text-[17px] leading-snug">{item.label}</span>
+                      ) : null}
+                      <Icon
+                        className={`shrink-0 ${collapsed ? "w-6 h-6" : "w-5 h-5 sm:w-6 sm:h-6"} ${
+                          isActive ? "text-[#e8174a]" : "text-gray-800"
+                        }`}
+                      />
+                    </NavLink>
+                  </li>
+                );
+              })}
+            </ul>
+          </nav>
+        )}
 
         {canToggle ? (
           <div className={`shrink-0 ${collapsed ? "px-2 pb-2" : "px-3 sm:px-4 pb-2"}`}>
             <button
               type="button"
-              onClick={handleToggleSidebar}
+              onClick={toggle}
               aria-expanded={!collapsed}
               aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
               title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -321,37 +271,39 @@ export function PageHeader({
           </div>
         ) : null}
 
-        <div className={`border-t border-gray-200 shrink-0 ${collapsed ? "p-2" : "px-4 py-4"}`}>
-          {collapsed ? (
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="w-full flex items-center justify-center p-2.5 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
-              aria-label="Log out"
-              title="Log out"
-            >
-              <IconLogout className="w-6 h-6" />
-            </button>
-          ) : (
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="font-bold text-[15px] sm:text-[17px] text-gray-900 truncate">{displayName}</p>
-                {displayEmail ? (
-                  <p className="text-[13px] sm:text-[15px] text-gray-700 truncate mt-0.5">{displayEmail}</p>
-                ) : null}
-              </div>
+        {!isMinimal ? (
+          <div className={`border-t border-gray-200 shrink-0 ${collapsed ? "p-2" : "px-4 py-4"}`}>
+            {collapsed ? (
               <button
                 type="button"
                 onClick={handleLogout}
-                className="shrink-0 p-1.5 rounded-md text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors"
+                className="w-full flex items-center justify-center p-2.5 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
                 aria-label="Log out"
                 title="Log out"
               >
-                <IconLogout className="w-5 h-5 sm:w-6 sm:h-6" />
+                <IconLogout className="w-6 h-6" />
               </button>
-            </div>
-          )}
-        </div>
+            ) : (
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-bold text-[15px] sm:text-[17px] text-gray-900 truncate">{displayName}</p>
+                  {displayEmail ? (
+                    <p className="text-[13px] sm:text-[15px] text-gray-700 truncate mt-0.5">{displayEmail}</p>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="shrink-0 p-1.5 rounded-md text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors"
+                  aria-label="Log out"
+                  title="Log out"
+                >
+                  <IconLogout className="w-5 h-5 sm:w-6 sm:h-6" />
+                </button>
+              </div>
+            )}
+          </div>
+        ) : null}
       </aside>
 
       <div className="flex-1 min-w-0 flex flex-col min-h-screen">
