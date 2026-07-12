@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FAMILIS_CURRENT_SESSION_KEY, markSessionConsented, performLogout } from "../RequireAuth";
 import { apiFetch } from "../lib/api";
-import logo from "../assets/logo.png";
+import { BrandTopBar } from "../components/BrandTopBar";
 
 const CONSENT_VERSION = "1.0";
 const DEVICE_ID_KEY = "familis.deviceId";
@@ -185,19 +185,8 @@ export default function Consent() {
 
   return (
     <div className="min-h-screen bg-[#f6f7fb]" style={{ fontFamily: "'Montserrat', sans-serif" }}>
-      <header className="bg-[#e8174a] text-white">
-        <div className="h-16 sm:h-[72px] px-4 sm:px-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <img src={logo} alt="FaMiLis logo" className="w-10 h-10 sm:w-11 sm:h-11 object-contain" />
-            <div>
-              <span className="text-white text-xl sm:text-2xl font-bold tracking-wide leading-none block">
-                FaMiLis
-              </span>
-              <span className="text-white/70 text-[10px] tracking-widest uppercase block leading-none">
-                Participant Consent
-              </span>
-            </div>
-          </div>
+      <BrandTopBar
+        actions={
           <button
             type="button"
             onClick={() => performLogout(navigate)}
@@ -205,8 +194,8 @@ export default function Consent() {
           >
             Log Out
           </button>
-        </div>
-      </header>
+        }
+      />
 
       <main className="px-6 py-10">
         <div className="max-w-2xl mx-auto">
@@ -224,6 +213,9 @@ export default function Consent() {
                   </svg>
                 )}
               </div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-[#e8174a] mb-2">
+                Participant Consent
+              </p>
               <h1 className="text-xl font-bold text-gray-900">
                 {!sessionLookupDone ? "Looking for session…" : "No active session"}
               </h1>
@@ -236,6 +228,9 @@ export default function Consent() {
           ) : (
             <>
               <div className="text-center mb-6">
+                <p className="text-xs font-semibold uppercase tracking-wider text-[#e8174a] mb-2">
+                  Participant Consent
+                </p>
                 <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Before we begin</h1>
                 <p className="text-sm text-gray-600 mt-1">
                   {foodName ? `Tasting session: ${foodName}` : "Please review and confirm your consent."}
