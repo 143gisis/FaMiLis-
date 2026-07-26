@@ -7,7 +7,7 @@ export function FerConfidenceCard({ meanConfidence }: { meanConfidence: number }
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 p-4 md:p-6 lg:px-10 lg:py-8 shadow-sm min-h-[160px] lg:min-h-[200px] h-full flex flex-col justify-center">
-      <p className="text-s md:text-sm text-gray-500 font-semibold flex items-center gap-1.5">
+      <p className="text-s md:text-sm text-black-500 font-bold flex items-center gap-1.5">
         Mean FER Confidence Score
         <InfoTip term="confidenceScore" align="left" />
       </p>
