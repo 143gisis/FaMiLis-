@@ -8,15 +8,18 @@ import { FoodCard } from "../components/dashboard";
 import {
   ColoredRatingBar,
   FerConfidenceCard,
+  HedonicInterpretationCard,
   HeroHedonicCard,
   InsightCard,
+  MeanFerHedonicCard,
+  MeanSurveyHedonicCard,
   MetricCard,
   SectionPill,
   SessionTrendChart,
   StatsCategoryRibbon,
   type StatsCategory,
 } from "../components/analytics";
-import { RATING_LABELS, hedonicColor } from "../lib/ratingLabels";
+import { RATING_LABELS, buildHedonicInterpretation, hedonicColor } from "../lib/ratingLabels";
 import { ATTRIBUTE_COLORS, getDemoColor } from "../lib/attributeColors";
 import {
   Chart as ChartJS,
@@ -541,7 +544,7 @@ export default function Dashboard() {
           angleLines: { color: "rgba(156, 163, 175, 0.25)" },
           pointLabels: {
             color: "#6b7280",
-            font: { size: 11, weight: 600 as any },
+            font: { size: 12, weight: 600 as any },
           },
         },
       },
@@ -845,14 +848,34 @@ export default function Dashboard() {
                         <div>
                           <SectionPill>Product Analytics</SectionPill>
                           <p className="text-s text-gray-500 -mt-1 mb-4">
-                            {selectedFood.name} · Live analytics from DB
+                            How much consumers like this product
                           </p>
 
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[1fr_1.2fr] gap-4 mb-4">
-                            <HeroHedonicCard
-                              score={stats.surveyCount > 0 ? stats.aspectStats.overall.mean : null}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <MeanFerHedonicCard
+                              title="Mean FER Hedonic Score"
+                              score={stats.frameLogCount > 0 ? stats.meanHedonic : null}
+                              confidence={stats.frameLogCount > 0 ? stats.meanConfidence : null}
+                              emptyLabel="No frame data yet"
                             />
-                            <FerConfidenceCard meanConfidence={stats.meanConfidence} />
+                            <MeanSurveyHedonicCard
+                              title="Mean Overall Survey Ratings"
+                              score={stats.surveyCount > 0 ? stats.aspectStats.overall.mean : null}
+                              showHedonicLabel
+                              emptyLabel="No survey data yet"
+                            />
+                          </div>
+
+                          <div className="mb-4">
+                            <HedonicInterpretationCard
+                              text={buildHedonicInterpretation({
+                                surveyOverall:
+                                  stats.surveyCount > 0 ? stats.aspectStats.overall.mean : null,
+                                ferMean: stats.frameLogCount > 0 ? stats.meanHedonic : null,
+                                confidence: stats.frameLogCount > 0 ? stats.meanConfidence : null,
+                                aspectStats: stats.aspectStats,
+                              })}
+                            />
                           </div>
 
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -922,8 +945,21 @@ export default function Dashboard() {
 
                     {statsCategory === "frames" ? (
                       <LowSampleOverlay active={lowSample} sampleSize={surveyCountN}>
+                        <div className="mb-6">
+                          <SectionPill>Facial Emotion Recognition (FER) Results</SectionPill>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[1fr_1.2fr] gap-4 mt-4">
+                            <MeanFerHedonicCard
+                              title="Mean FER Hedonic Score"
+                              score={stats.frameLogCount > 0 ? stats.meanHedonic : null}
+                              emptyLabel="No frame data yet"
+                              showConfidenceBar={false}
+                            />
+                            <FerConfidenceCard meanConfidence={stats.meanConfidence} />
+                          </div>
+                        </div>
+
                         <div>
-                          <SectionPill infoTerm="ferVsSurvey">Reaction Distribution</SectionPill>
+                          <SectionPill>Reaction Distribution</SectionPill>
                           <p className="text-s text-gray-500 -mt-1 mb-4">
                             Do consumers like this product? (frame-by-frame FER)
                           </p>
@@ -1032,33 +1068,41 @@ export default function Dashboard() {
                     {statsCategory === "survey" ? (
                       <LowSampleOverlay active={lowSample} sampleSize={surveyCountN}>
                         <div>
-                          <SectionPill infoTerm="sensoryAttributes">Sensory Attributes</SectionPill>
+                          <SectionPill infoTerm="sensoryAttributes">Survey Results (with Sensory Attributes)</SectionPill>
                           <p className="text-s text-gray-500 -mt-1 mb-4">
-                            What consumers like about the product (survey-based)
+                            What consumers liked about the product? (from survey results)
                           </p>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="bg-gray-50 rounded-lg border border-gray-100 p-4">
-                              <p className="text-s text-gray-600 font-semibold mb-2">Spider chart</p>
-                              <div className="min-h-[200px] h-[240px]">
-                                <Radar data={radarChartData as any} options={radarChartOptions as any} />
+                          {/* Figma-inspired: radar left; hero + attribute bars stacked right */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
+                            <div className="bg-gray-50 rounded-lg border border-gray-100 p-4 h-full flex flex-col">
+                              <p className="text-s text-gray-600 font-semibold mb-2 shrink-0">Spider chart</p>
+                              <div className="relative flex-1 min-h-[280px] md:min-h-[420px] w-full">
+                                <div className="absolute inset-0">
+                                  <Radar data={radarChartData as any} options={radarChartOptions as any} />
+                                </div>
                               </div>
                             </div>
-                            <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
-                              {stats.radar.map((r, i) => {
-                                const aspectKey = ASPECT_KEY_BY_LABEL[r.label];
-                                const aspect = aspectKey ? stats.aspectStats[aspectKey] : undefined;
-                                return (
-                                  <ColoredRatingBar
-                                    key={r.label}
-                                    label={r.label}
-                                    rating={r.score}
-                                    color={ATTRIBUTE_COLORS[r.label] ?? "#e8174a"}
-                                    n={aspect?.n}
-                                    stdDev={aspect?.stdDev}
-                                    showStatsTips={i === 0}
-                                  />
-                                );
-                              })}
+                            <div className="flex flex-col gap-4">
+                              <HeroHedonicCard
+                                score={stats.surveyCount > 0 ? stats.aspectStats.overall.mean : null}
+                              />
+                              <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
+                                {radarAttributes.map((r, i) => {
+                                  const aspectKey = ASPECT_KEY_BY_LABEL[r.label];
+                                  const aspect = aspectKey ? stats.aspectStats[aspectKey] : undefined;
+                                  return (
+                                    <ColoredRatingBar
+                                      key={r.label}
+                                      label={r.label}
+                                      rating={r.score}
+                                      color={ATTRIBUTE_COLORS[r.label] ?? "#e8174a"}
+                                      n={aspect?.n}
+                                      stdDev={aspect?.stdDev}
+                                      showStatsTips={i === 0}
+                                    />
+                                  );
+                                })}
+                              </div>
                             </div>
                           </div>
                         </div>
