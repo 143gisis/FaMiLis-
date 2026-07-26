@@ -885,7 +885,7 @@ export default function Dashboard() {
 
                         <LowSampleOverlay active={lowSample} sampleSize={surveyCountN}>
                           <div>
-                            <SectionPill infoTerm="sessionTrends">Session Trends (Over Time)</SectionPill>
+                            <SectionPill infoTerm="sessionTrends">Session Survey Trends (Over Time)</SectionPill>
                             <p className="text-s text-gray-500 -mt-1 mb-4">
                               How survey ratings change across testing sessions for this product
                             </p>

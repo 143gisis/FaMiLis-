@@ -153,7 +153,7 @@ export function SessionTrendChart({ sessionTrends }: { sessionTrends: SessionTre
   return (
     <div className="bg-gray-50 rounded-lg border border-gray-100 p-4">
       <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-        <p className="text-xs text-gray-600 font-semibold">Overall rating over sessions</p>
+        <p className="text-xs text-gray-600 font-semibold">Survey hedonic ratings over sessions</p>
         <div className="flex items-center gap-1.5 flex-wrap">
           {ASPECT_OPTIONS.map((a) => (
             <button

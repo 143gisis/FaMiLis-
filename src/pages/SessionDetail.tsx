@@ -631,24 +631,28 @@ export default function SessionDetail() {
               {/* Metric cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
                 <MetricCard
-                  icon="📷"
-                  iconBg="bg-blue-50 text-blue-600"
-                  title="Total Frames Analyzed"
-                  value={`${content.metrics.totalFrames}`}
-                  infoTerm="framesAnalyzed"
-                />
-                <MetricCard
                   icon="📈"
                   iconBg="bg-green-50 text-green-600"
-                  title="Avg Confidence Score"
+                  title="Mean FER Confidence Score"
                   value={meanConfidencePct == null ? "-" : `${meanConfidencePct}%`}
                   infoTerm="confidenceScore"
                 />
                 <MetricCard
                   icon="🍦"
                   iconBg="bg-red-50 text-[#e8174a]"
-                  title="Avg Hedonic Score"
+                  title="Mean FER Hedonic Score"
                   value={meanHedonicOutOf9 == null ? "-" : `${meanHedonicOutOf9.toFixed(1)}`}
+                  infoTerm="hedonicScore"
+                />
+                <MetricCard
+                  icon="📝"
+                  iconBg="bg-red-50 text-[#e8174a]"
+                  title="Overall Survey Hedonic Rating"
+                  value={
+                    content?.surveyResults?.finalOverallRating == null
+                      ? "-"
+                      : `${content.surveyResults.finalOverallRating.toFixed(1)}`
+                  }             
                   infoTerm="hedonicScore"
                 />
               </div>

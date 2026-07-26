@@ -3,7 +3,7 @@ import { InfoTip } from "../InfoTip";
 
 export function HeroHedonicCard({
   score,
-  label = "Final Hedonic Score",
+  label = "Overall Survey Hedonic Rating",
 }: {
   score: number | null;
   label?: string;
