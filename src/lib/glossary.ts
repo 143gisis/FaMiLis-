@@ -120,7 +120,7 @@ export const GLOSSARY: Record<GlossaryTerm, GlossaryEntry> = {
   },
   ferVsSurvey: {
     title: "FER vs survey",
-    body: "FER is camera-inferred reactions from frames. Survey is self-reported ratings. Keep them distinct.",
+    body: "FER is camera-inferred reactions from frames. Survey is self-reported ratings. They are distinct.",
   },
   demographicsHedonic: {
     title: "Demographics",
