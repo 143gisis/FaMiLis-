@@ -9,4 +9,7 @@ export { StatsCategoryRibbon } from "./StatsCategoryRibbon";
 export type { StatsCategory } from "./StatsCategoryRibbon";
 export { HeroHedonicCard } from "./HeroHedonicCard";
 export { FerConfidenceCard } from "./FerConfidenceCard";
+export { MeanFerHedonicCard } from "./MeanFerHedonicCard";
+export { MeanSurveyHedonicCard } from "./MeanSurveyHedonicCard";
+export { HedonicInterpretationCard } from "./HedonicInterpretationCard";
 export { SessionTrendChart } from "./SessionTrendChart";
