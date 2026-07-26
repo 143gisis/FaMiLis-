@@ -1083,11 +1083,13 @@ function SurveyResultsPanel({
         </div>
       </div>
 
-      {/* B. Sensory Rating Breakdown */}
+      {/* B. Sensory breakdown: bars left, overall hero right */}
       <div>
         <SectionPill infoTerm="sensoryAttributes">Sensory Rating Breakdown</SectionPill>
+        <p className="text-s text-gray-500 -mt-1 mb-4">
+          What consumers liked about the product (from survey results)
+        </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
-          {/* Left: colored attribute bars */}
           <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
             {attributes.map((a) => (
               <ColoredRatingBar
@@ -1098,12 +1100,11 @@ function SurveyResultsPanel({
               />
             ))}
           </div>
-
           <HeroHedonicCard score={overallVal} label="Overall Rating" />
         </div>
       </div>
 
-      {/* C. Key Insights */}
+      {/* D. Key Insights */}
       <div>
         <SectionPill>Key Insights</SectionPill>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -1123,10 +1124,10 @@ function SurveyResultsPanel({
         </div>
       </div>
 
-      {/* D. Remarks */}
+      {/* E. Remarks (manual overall feedback; separate from FER hedonic) */}
       {(sr.remarks != null || true) && (
         <div>
-          <SectionPill>Remarks</SectionPill>
+          <SectionPill>Overall Feedback / Remarks</SectionPill>
           <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
             <p className="text-sm text-gray-600 leading-relaxed">
               {sr.remarks ?? "No remarks provided for this session."}
