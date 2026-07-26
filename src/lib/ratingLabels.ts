@@ -122,7 +122,11 @@ export function buildHedonicInterpretation(input: HedonicInterpretationInput): s
         ? ` with ${Math.round(confidence * 100)}% mean confidence`
         : "";
     parts.push(
-      `while the <strong>FER system</strong> predicts the customer's emotional reaction to this product as <strong>${formatHedonicPhrase(fer)}</strong> with <strong>${Math.round(confidence * 100)}% confidence</strong>.`
+      `while the <strong>FER system</strong> predicts the customer's emotional reaction to this product as <strong>${formatHedonicPhrase(fer)}</strong>` +
+        (confidence != null && Number.isFinite(confidence)
+          ? ` with <strong>${Math.round(confidence * 100)}% confidence</strong>`
+          : "") +
+        "."
     );
   } else if (confidence != null && Number.isFinite(confidence) && confidence > 0) {
     parts.push(`Mean FER confidence is ${Math.round(confidence * 100)}%.`);
