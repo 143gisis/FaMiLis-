@@ -880,13 +880,14 @@ export default function Dashboard() {
 
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                             <InsightCard
-                              title="Sample Size (N)"
+                              variant="default"
+                              title="Valid Taster Responses (N)"
                               value={String(stats.surveyCount)}
                               infoTerm="sampleSize"
                               sub={
                                 stats.surveyCount < 5
-                                  ? "Need at least 5 surveys for reliable trends"
-                                  : "Completed survey responses for this product"
+                                  ? "Need at least 5 responses for reliable trends"
+                                  : undefined
                               }
                             />
                             <MetricCard
