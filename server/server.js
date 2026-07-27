@@ -1147,7 +1147,7 @@ async function start() {
             END
           ) AS avg_duration_min
         FROM food_products fp
-        LEFT JOIN sessions s ON s.food_id = fp.food_id
+        LEFT JOIN sessions s ON s.food_id = fp.food_id AND s.invalidated_at IS NULL
         GROUP BY fp.food_id, fp.name, fp.category, fp.image_url, fp.created_at
         ORDER BY fp.created_at DESC, fp.food_id DESC
       `
@@ -1421,7 +1421,7 @@ async function start() {
         `
         SELECT COUNT(*) AS session_count
         FROM sessions
-        WHERE food_id = ?
+        WHERE food_id = ? AND invalidated_at IS NULL
       `,
         [foodId]
       );
@@ -1431,7 +1431,7 @@ async function start() {
         SELECT AVG(fl.confidence_score) AS mean_confidence
         FROM frame_logs fl
         INNER JOIN sessions s ON s.session_id = fl.session_id
-        WHERE s.food_id = ? AND fl.confidence_score IS NOT NULL
+        WHERE s.food_id = ? AND s.invalidated_at IS NULL AND fl.confidence_score IS NOT NULL
       `,
         [foodId]
       );
@@ -1441,7 +1441,7 @@ async function start() {
         SELECT AVG(fl.hedonic_score) AS mean_hedonic
         FROM frame_logs fl
         INNER JOIN sessions s ON s.session_id = fl.session_id
-        WHERE s.food_id = ? AND fl.hedonic_score IS NOT NULL
+        WHERE s.food_id = ? AND s.invalidated_at IS NULL AND fl.hedonic_score IS NOT NULL
       `,
         [foodId]
       );
@@ -1455,7 +1455,7 @@ async function start() {
           COUNT(fl.frame_log_id) AS total_count
         FROM frame_logs fl
         INNER JOIN sessions s ON s.session_id = fl.session_id
-        WHERE s.food_id = ? AND fl.hedonic_score IS NOT NULL
+        WHERE s.food_id = ? AND s.invalidated_at IS NULL AND fl.hedonic_score IS NOT NULL
       `,
         [foodId]
       );
@@ -1481,7 +1481,7 @@ async function start() {
           AVG(sr.final_overall_rating) AS final_overall_rating
         FROM survey_results sr
         INNER JOIN sessions s ON s.session_id = sr.session_id
-        WHERE s.food_id = ?
+        WHERE s.food_id = ? AND s.invalidated_at IS NULL
       `,
         [foodId]
       );
@@ -1513,7 +1513,7 @@ async function start() {
             SELECT fl.hedonic_score, fl.timestamp
             FROM frame_logs fl
             INNER JOIN sessions s ON s.session_id = fl.session_id
-            WHERE s.food_id = ? AND fl.hedonic_score IS NOT NULL
+            WHERE s.food_id = ? AND s.invalidated_at IS NULL AND fl.hedonic_score IS NOT NULL
           ),
           bucketed AS (
             SELECT hedonic_score, NTILE(3) OVER (ORDER BY timestamp) AS bucket
@@ -1559,7 +1559,7 @@ async function start() {
           STDDEV_SAMP(sr.final_overall_rating) AS overall_stddev
         FROM survey_results sr
         INNER JOIN sessions s ON s.session_id = sr.session_id
-        WHERE s.food_id = ?
+        WHERE s.food_id = ? AND s.invalidated_at IS NULL
       `,
         [foodId]
       );
@@ -1602,7 +1602,7 @@ async function start() {
           WHERE hedonic_score IS NOT NULL
           GROUP BY session_id
         ) fer ON fer.session_id = s.session_id
-        WHERE s.food_id = ?
+        WHERE s.food_id = ? AND s.invalidated_at IS NULL
         ORDER BY s.start_time ASC
       `,
         [foodId]
@@ -1634,7 +1634,7 @@ async function start() {
         FROM survey_results sr
         INNER JOIN sessions s ON s.session_id = sr.session_id
         LEFT JOIN participants p ON p.participant_id = s.participant_id
-        WHERE s.food_id = ?
+        WHERE s.food_id = ? AND s.invalidated_at IS NULL
         GROUP BY age_group
       `,
         [foodId]
@@ -1648,7 +1648,7 @@ async function start() {
         FROM survey_results sr
         INNER JOIN sessions s ON s.session_id = sr.session_id
         LEFT JOIN participants p ON p.participant_id = s.participant_id
-        WHERE s.food_id = ?
+        WHERE s.food_id = ? AND s.invalidated_at IS NULL
         GROUP BY gender
       `,
         [foodId]
@@ -1668,7 +1668,7 @@ async function start() {
         SELECT COUNT(*) AS survey_count
         FROM survey_results sr
         INNER JOIN sessions s ON s.session_id = sr.session_id
-        WHERE s.food_id = ?
+        WHERE s.food_id = ? AND s.invalidated_at IS NULL
       `,
         [foodId]
       );
@@ -1736,7 +1736,7 @@ async function start() {
         FROM sessions s
         LEFT JOIN participants p ON p.participant_id = s.participant_id
         LEFT JOIN survey_results sr ON sr.session_id = s.session_id
-        WHERE s.food_id = ?
+        WHERE s.food_id = ? AND s.invalidated_at IS NULL
         ORDER BY s.start_time ASC
       `,
         [foodId]
@@ -2707,7 +2707,83 @@ async function start() {
     }
   });
 
-  app.delete("/api/sessions/:sessionId", async (req, res) => {
+  // Restore a session as the sole valid record for its participant+food pair.
+  app.post("/api/sessions/:sessionId/revalidate", requireRole("admin"), async (req, res) => {
+    const sessionId = Number.parseInt(req.params.sessionId, 10);
+    if (!Number.isFinite(sessionId)) {
+      return res.status(400).json({ ok: false, error: "Invalid sessionId." });
+    }
+
+    try {
+      const [[sessionRow]] = await pool.query(
+        `
+        SELECT session_id, participant_id, food_id, status, invalidated_at, retention_status
+        FROM sessions
+        WHERE session_id = ?
+        LIMIT 1
+      `,
+        [sessionId]
+      );
+      if (!sessionRow) {
+        return res.status(404).json({ ok: false, error: "Session not found." });
+      }
+
+      await pool.query(
+        `
+        UPDATE sessions
+        SET invalidated_at = NULL,
+            retention_status = 'active'
+        WHERE session_id = ?
+      `,
+        [sessionId]
+      );
+
+      if (sessionRow.participant_id != null) {
+        await pool.query(
+          `
+          UPDATE sessions
+          SET invalidated_at = COALESCE(invalidated_at, NOW()),
+              retention_status = 'pending_deletion'
+          WHERE participant_id = ?
+            AND food_id = ?
+            AND session_id <> ?
+            AND invalidated_at IS NULL
+        `,
+          [sessionRow.participant_id, sessionRow.food_id, sessionId]
+        );
+      }
+
+      const [[row]] = await pool.query(
+        `
+        SELECT session_id, status, invalidated_at, retention_status
+        FROM sessions
+        WHERE session_id = ?
+        LIMIT 1
+      `,
+        [sessionId]
+      );
+
+      void writeSystemLog(pool, {
+        sessionId,
+        logType: "info",
+        message: "Session revalidated as the valid record for this participant and food.",
+      });
+      return res.json({
+        ok: true,
+        session: {
+          id: Number(row.session_id),
+          status: row.status,
+          invalidatedAt: toIsoOrNull(row.invalidated_at),
+          retentionStatus: row.retention_status,
+        },
+      });
+    } catch (err) {
+      console.error("POST /api/sessions/:sessionId/revalidate error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
+  app.delete("/api/sessions/:sessionId", requireRole("admin", "staff"), async (req, res) => {
     const sessionId = Number.parseInt(req.params.sessionId, 10);
     if (!Number.isFinite(sessionId)) {
       return res.status(400).json({ ok: false, error: "Invalid sessionId." });
@@ -2790,12 +2866,28 @@ async function start() {
 
     try {
       const [[sessionRow]] = await pool.query(
-        `SELECT session_id FROM sessions WHERE session_id = ? LIMIT 1`,
+        `
+        SELECT session_id, participant_id, food_id
+        FROM sessions
+        WHERE session_id = ?
+        LIMIT 1
+      `,
         [sessionId]
       );
 
       if (!sessionRow) {
         return res.status(404).json({ ok: false, error: "Session not found." });
+      }
+
+      const [[existingSurvey]] = await pool.query(
+        `SELECT survey_result_id FROM survey_results WHERE session_id = ? LIMIT 1`,
+        [sessionId]
+      );
+      if (existingSurvey) {
+        return res.status(409).json({
+          ok: false,
+          error: "Survey already submitted for this session.",
+        });
       }
 
       // Ensure the session is marked completed even if stop endpoint wasn't called.
@@ -2818,13 +2910,6 @@ async function start() {
           remarks
         )
         VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-          color_rating = VALUES(color_rating),
-          flavor_aroma_rating = VALUES(flavor_aroma_rating),
-          salt_sweet_rating = VALUES(salt_sweet_rating),
-          texture_rating = VALUES(texture_rating),
-          final_overall_rating = VALUES(final_overall_rating),
-          remarks = VALUES(remarks)
       `,
         [
           sessionId,
@@ -2837,9 +2922,38 @@ async function start() {
         ]
       );
 
+      // Latest survey wins: soft-invalidate other valid sessions for same participant+food.
+      if (sessionRow.participant_id != null) {
+        const [siblingResult] = await pool.query(
+          `
+          UPDATE sessions
+          SET invalidated_at = COALESCE(invalidated_at, NOW()),
+              retention_status = 'pending_deletion'
+          WHERE participant_id = ?
+            AND food_id = ?
+            AND session_id <> ?
+            AND invalidated_at IS NULL
+        `,
+          [sessionRow.participant_id, sessionRow.food_id, sessionId]
+        );
+        if (siblingResult.affectedRows > 0) {
+          void writeSystemLog(pool, {
+            sessionId,
+            logType: "info",
+            message: `Auto-invalidated ${siblingResult.affectedRows} prior session(s) for the same participant and food.`,
+          });
+        }
+      }
+
       void writeSystemLog(pool, { sessionId, logType: "info", message: "Survey submitted." });
       return res.json({ ok: true, sessionId });
     } catch (err) {
+      if (err?.code === "ER_DUP_ENTRY") {
+        return res.status(409).json({
+          ok: false,
+          error: "Survey already submitted for this session.",
+        });
+      }
       console.error("POST /api/sessions/:sessionId/survey error:", err);
       return res.status(500).json({ ok: false, error: "Server error." });
     }
