@@ -3,6 +3,7 @@ export type ParticipantListItem = {
   testerLabel: string | null;
   age: number | null;
   gender: string | null;
+  dietaryRestrictions?: string | null;
   createdAt: string | null;
   sessionCount?: number;
   lastFoodName?: string | null;

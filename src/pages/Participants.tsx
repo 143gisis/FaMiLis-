@@ -34,12 +34,12 @@ export default function Participants() {
       const res = await apiFetch(`/api/participants`, { signal });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) {
-        throw new Error(json?.error || "Failed to load participants.");
+        throw new Error(json?.error || "Failed to load tasters.");
       }
       setParticipants((json.participants ?? []) as ParticipantListItem[]);
     } catch (err: any) {
       if (err?.name === "AbortError") return;
-      setError(err?.message || "Failed to load participants.");
+      setError(err?.message || "Failed to load tasters.");
       setParticipants([]);
     } finally {
       setLoading(false);
@@ -86,7 +86,7 @@ export default function Participants() {
   const handleFormSubmit = async (values: ParticipantFormValues) => {
     const label = values.testerLabel.trim();
     if (!label) {
-      setFormError("Participant label is required.");
+      setFormError("Taster label is required.");
       return;
     }
 
@@ -106,6 +106,7 @@ export default function Participants() {
     }
 
     const gender = values.gender || null;
+    const dietaryRestrictions = values.dietaryRestrictions.trim() || null;
     setFormSaving(true);
     setFormError(null);
 
@@ -118,32 +119,33 @@ export default function Participants() {
             testerLabel: label,
             age,
             gender,
+            dietaryRestrictions,
             createOnly: true,
           }),
         });
         const json = await res.json().catch(() => null);
         if (!res.ok || !json?.ok) {
-          throw new Error(json?.error || "Failed to add participant.");
+          throw new Error(json?.error || "Failed to add taster.");
         }
-        setToast("Participant added");
+        setToast("Taster added");
       } else if (formMode === "edit" && editing) {
         const res = await apiFetch(`/api/participants/${editing.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ testerLabel: label, age, gender }),
+          body: JSON.stringify({ testerLabel: label, age, gender, dietaryRestrictions }),
         });
         const json = await res.json().catch(() => null);
         if (!res.ok || !json?.ok) {
-          throw new Error(json?.error || "Failed to update participant.");
+          throw new Error(json?.error || "Failed to update taster.");
         }
-        setToast("Participant updated");
+        setToast("Taster updated");
       }
 
       setFormMode(null);
       setEditing(null);
       await loadParticipants();
     } catch (err: any) {
-      setFormError(err?.message || "Failed to save participant.");
+      setFormError(err?.message || "Failed to save taster.");
     } finally {
       setFormSaving(false);
     }
@@ -157,13 +159,13 @@ export default function Participants() {
       const res = await apiFetch(`/api/participants/${deleting.id}`, { method: "DELETE" });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) {
-        throw new Error(json?.error || "Failed to delete participant.");
+        throw new Error(json?.error || "Failed to delete taster.");
       }
       setDeleting(null);
-      setToast("Participant deleted");
+      setToast("Taster deleted");
       await loadParticipants();
     } catch (err: any) {
-      setDeleteError(err?.message || "Failed to delete participant.");
+      setDeleteError(err?.message || "Failed to delete taster.");
     } finally {
       setDeletePending(false);
     }
@@ -180,8 +182,8 @@ export default function Participants() {
       <main className="px-6 py-8">
         <div className="max-w-6xl mx-auto">
           <PageTitle
-            title="Participants"
-            subtitle="Manage tasting participants and open their session history."
+            title="Tasters"
+            subtitle="Manage tasting profiles and open their session history."
             hideBack
           />
 
@@ -191,7 +193,7 @@ export default function Participants() {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by participant label…"
+                placeholder="Search by taster label…"
                 className="w-full max-w-sm border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white"
               />
               <button
@@ -199,19 +201,19 @@ export default function Participants() {
                 onClick={openCreate}
                 className="bg-[#e8174a] hover:bg-[#c9143f] text-white text-sm font-semibold px-4 py-2 rounded-md shadow-sm transition-colors whitespace-nowrap"
               >
-                Add participant
+                Add taster
               </button>
             </div>
 
             {loading ? (
-              <div className="text-center text-gray-500 text-sm py-10">Loading participants…</div>
+              <div className="text-center text-gray-500 text-sm py-10">Loading tasters…</div>
             ) : error ? (
               <div className="text-center text-red-600 text-sm py-10">{error}</div>
             ) : filtered.length === 0 ? (
               <div className="text-center text-gray-500 text-sm py-10">
                 {participants.length === 0
-                  ? "No participants yet. Add one here, or create them when starting a session in Setup."
-                  : "No participants match your search."}
+                  ? "No tasters yet. Add one here, or create them when starting a session in Setup."
+                  : "No tasters match your search."}
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -259,6 +261,7 @@ export default function Participants() {
                   testerLabel: editing.testerLabel,
                   age: editing.age,
                   gender: editing.gender,
+                  dietaryRestrictions: editing.dietaryRestrictions ?? null,
                 }
               : null
           }

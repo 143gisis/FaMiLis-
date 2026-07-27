@@ -10,6 +10,7 @@ import {
   type UserListItem,
 } from "../components/users";
 import { apiFetch } from "../lib/api";
+import { roleLabel } from "../lib/roleLabels";
 import { FAMILIS_USER_KEY } from "../RequireAuth";
 
 function getStoredUserId(): number | null {
@@ -92,7 +93,8 @@ export default function AdminUsers() {
       (u) =>
         u.username.toLowerCase().includes(q) ||
         u.email.toLowerCase().includes(q) ||
-        u.role.toLowerCase().includes(q)
+        u.role.toLowerCase().includes(q) ||
+        roleLabel(u.role).toLowerCase().includes(q)
     );
   }, [users, search]);
 
@@ -253,7 +255,7 @@ export default function AdminUsers() {
         <div className="max-w-6xl mx-auto">
           <PageTitle
             title="Users"
-            subtitle="Manage admin, staff, and tester accounts. Their details, roles and passwords can be changed here."
+            subtitle="Manage Admin, Operator, and Taster accounts. Their details, roles and passwords can be changed here."
             hideBack
           />
 
@@ -282,7 +284,7 @@ export default function AdminUsers() {
             ) : filtered.length === 0 ? (
               <div className="text-center text-gray-500 text-sm py-10">
                 {users.length === 0
-                  ? "No users yet. Add an admin, staff, or tester account."
+                  ? "No users yet. Add an Admin, Operator, or Taster account."
                   : "No users match your search."}
               </div>
             ) : (

@@ -20,11 +20,9 @@ import { ATTRIBUTE_COLORS } from "../lib/attributeColors";
 import { confidenceToTier } from "../lib/confidence";
 import {
   FrameDeleteDialog,
-  FrameEditModal,
   FrameFolderAccordion,
   FrameGroupToolbar,
   useFrameGroups,
-  type FrameEditValues,
   type FrameGroupBy,
   type FrameViewMode,
   type IndexedFrameLog,
@@ -190,9 +188,6 @@ export default function SessionDetail() {
   const [frameGroupBy, setFrameGroupBy] = useState<FrameGroupBy>("time");
   const [frameFaceOnly, setFrameFaceOnly] = useState(false);
   const [frameLowConfidenceOnly, setFrameLowConfidenceOnly] = useState(false);
-  const [editingFrame, setEditingFrame] = useState<IndexedFrameLog | null>(null);
-  const [frameEditSaving, setFrameEditSaving] = useState(false);
-  const [frameEditError, setFrameEditError] = useState<string | null>(null);
   const [deletingFrame, setDeletingFrame] = useState<IndexedFrameLog | null>(null);
   const [frameDeletePending, setFrameDeletePending] = useState(false);
   const [frameDeleteError, setFrameDeleteError] = useState<string | null>(null);
@@ -474,50 +469,6 @@ export default function SessionDetail() {
     },
   });
 
-  const onSaveFrameEdit = async (values: FrameEditValues) => {
-    if (!content || !editingFrame) return;
-    setFrameEditSaving(true);
-    setFrameEditError(null);
-    try {
-      const res = await apiFetch(
-        `/api/sessions/${content.session.id}/frames/${editingFrame.frameLogId}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(values),
-        }
-      );
-      const json = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok || !json?.frame || !json?.metrics) {
-        throw new Error(json?.error || "Failed to update frame.");
-      }
-      const updated = json.frame as FrameLog;
-      setData((prev) => {
-        if (!prev) return prev;
-        const next = applyFrameMetrics(prev, json.metrics);
-        return {
-          ...next,
-          frameLogs: prev.frameLogs.map((f) =>
-            f.frameLogId === updated.frameLogId ? { ...f, ...updated } : f
-          ),
-          systemLogs: [
-            ...prev.systemLogs,
-            {
-              logType: "info" as const,
-              message: `Frame ${updated.frameLogId} manually updated.`,
-              createdAt: new Date().toISOString(),
-            },
-          ],
-        };
-      });
-      setEditingFrame(null);
-    } catch (err: any) {
-      setFrameEditError(err?.message || "Failed to update frame.");
-    } finally {
-      setFrameEditSaving(false);
-    }
-  };
-
   const onConfirmFrameDelete = async () => {
     if (!content || !deletingFrame) return;
     setFrameDeletePending(true);
@@ -610,7 +561,7 @@ export default function SessionDetail() {
                       onClick={() => navigate(`/participants/${content.participant!.id}`)}
                       className="mt-2 inline-flex items-center text-xs font-semibold text-[#e8174a] hover:text-[#c9143f] transition-colors"
                     >
-                      View participant{content.participant.testerLabel ? ` (${content.participant.testerLabel})` : ""}
+                      View taster{content.participant.testerLabel ? ` (${content.participant.testerLabel})` : ""}
                     </button>
                   ) : null}
                 </div>
@@ -757,10 +708,6 @@ export default function SessionDetail() {
                                 label: formatDateTime(f.timestamp),
                               })
                             }
-                            onEdit={(f) => {
-                              setFrameEditError(null);
-                              setEditingFrame(f);
-                            }}
                             onDelete={(f) => {
                               setFrameDeleteError(null);
                               setDeletingFrame(f);
@@ -852,16 +799,6 @@ export default function SessionDetail() {
                                       <button
                                         type="button"
                                         onClick={() => {
-                                          setFrameEditError(null);
-                                          setEditingFrame(f);
-                                        }}
-                                        className="text-s font-semibold text-gray-600 hover:text-gray-900 transition-colors"
-                                      >
-                                        Edit
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
                                           setFrameDeleteError(null);
                                           setDeletingFrame(f);
                                         }}
@@ -949,19 +886,6 @@ export default function SessionDetail() {
             <img src={previewImage.url} alt="Frame preview" className="w-full max-h-[70vh] object-contain rounded-lg" />
           </div>
         </div>
-      ) : null}
-      {editingFrame ? (
-        <FrameEditModal
-          frame={editingFrame}
-          saving={frameEditSaving}
-          error={frameEditError}
-          onClose={() => {
-            if (frameEditSaving) return;
-            setEditingFrame(null);
-            setFrameEditError(null);
-          }}
-          onSubmit={onSaveFrameEdit}
-        />
       ) : null}
       {deletingFrame ? (
         <FrameDeleteDialog
@@ -1064,7 +988,7 @@ export default function SessionDetail() {
             </h2>
             <p className="text-sm text-gray-600">
               This restores session <span className="font-semibold">S-{content.session.id}</span> as the
-              valid record for this participant and food. Any other valid sessions for the same pair will
+              valid record for this taster and food. Any other valid sessions for the same pair will
               be invalidated and excluded from reports.
             </p>
             <div className="flex gap-3 mt-5">
@@ -1098,8 +1022,8 @@ function buildInsightSummary(ratings: (number | null)[]): string {
   const allPositive = valid.every((r) => r >= 6);
   const allNegative = valid.every((r) => r <= 4);
   const avg = valid.reduce((a, b) => a + b, 0) / valid.length;
-  if (allPositive) return "Participant rated all attributes positively.";
-  if (allNegative) return "Participant rated most attributes below average.";
+  if (allPositive) return "Taster rated all attributes positively.";
+  if (allNegative) return "Taster rated most attributes below average.";
   if (avg >= 6) return "Generally positive ratings with some variation.";
   if (avg <= 4) return "Mixed or below-average ratings across attributes.";
   return "Ratings are neutral to mixed across attributes.";
@@ -1155,11 +1079,11 @@ function SurveyResultsPanel({
 
   return (
     <div className="space-y-6">
-      {/* A. Participant Profile */}
+      {/* A. Taster Profile */}
       <div>
-        <SectionPill>Participant Profile</SectionPill>
+        <SectionPill>Taster Profile</SectionPill>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          <ProfileCard label="Participant ID" value={`P-${sessionId}`} />
+          <ProfileCard label="Taster ID" value={`P-${sessionId}`} />
           <ProfileCard label="Age" value={sr.age != null ? String(sr.age) : "—"} />
           <ProfileCard label="Gender" value={gender ?? "—"} />
         </div>
@@ -1182,7 +1106,7 @@ function SurveyResultsPanel({
               />
             ))}
           </div>
-          <HeroHedonicCard score={overallVal} label="Overall Rating" />
+          <HeroHedonicCard score={overallVal} label="Overall Survey Hedonic Rating" />
         </div>
       </div>
 
@@ -1206,17 +1130,18 @@ function SurveyResultsPanel({
         </div>
       </div>
 
-      {/* E. Remarks (manual overall feedback; separate from FER hedonic) */}
-      {(sr.remarks != null || true) && (
-        <div>
-          <SectionPill>Overall Feedback / Remarks</SectionPill>
-          <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
-            <p className="text-sm text-gray-600 leading-relaxed">
-              {sr.remarks ?? "No remarks provided for this session."}
-            </p>
-          </div>
+      {/* E. Manual survey remarks — not FER hedonic / confidence */}
+      <div>
+        <SectionPill>Manual Overall Feedback (Survey Remarks)</SectionPill>
+        <p className="text-s text-gray-500 -mt-1 mb-3">
+          Free-text comments from the survey. Separate from Mean FER Hedonic and Mean FER Confidence above.
+        </p>
+        <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
+          <p className="text-sm text-gray-600 leading-relaxed">
+            {sr.remarks ?? "No remarks provided for this session."}
+          </p>
         </div>
-      )}
+      </div>
     </div>
   );
 }

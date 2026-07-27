@@ -59,7 +59,7 @@ export function UserFormModal({
         </h2>
         <p className="text-sm text-gray-500 mb-4">
           {mode === "create"
-            ? "Create an operator or tester account. Share the password with them directly."
+            ? "Create an Operator or Taster account. Share the password with them directly."
             : "Update username and email. Use Set password or Change role for those fields."}
         </p>
 
@@ -114,8 +114,8 @@ export function UserFormModal({
                   className={inputClass}
                 >
                   <option value="admin">Admin</option>
-                  <option value="staff">Staff</option>
-                  <option value="tester">Tester</option>
+                  <option value="staff">Operator</option>
+                  <option value="tester">Taster</option>
                 </select>
               </div>
             </>

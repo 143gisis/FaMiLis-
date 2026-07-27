@@ -1,3 +1,5 @@
+import { roleLabel } from "../../lib/roleLabels";
+
 export type UserListItem = {
   id: number;
   username: string;
@@ -20,10 +22,6 @@ function formatDateTime(iso: string | null) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "-";
   return d.toLocaleString();
-}
-
-function roleLabel(role: UserListItem["role"]) {
-  return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
 export function UserRow({

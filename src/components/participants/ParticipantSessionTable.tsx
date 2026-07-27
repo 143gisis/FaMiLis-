@@ -1,4 +1,5 @@
 import { API_BASE } from "../../lib/api";
+import { InfoTip } from "../InfoTip";
 
 export type ParticipantSessionRow = {
   id: number;
@@ -7,6 +8,7 @@ export type ParticipantSessionRow = {
   foodCategory: string | null;
   foodImageUrl: string | null;
   status: "pending" | "active" | "completed" | "cancelled";
+  invalidatedAt: string | null;
   startTime: string | null;
   endTime: string | null;
   hasSurvey: boolean;
@@ -63,14 +65,14 @@ export function ParticipantSessionTable({
   if (sessions.length === 0) {
     return (
       <div className="text-sm text-gray-500 py-8 text-center">
-        This participant has no sessions yet.
+        This taster has no sessions yet.
       </div>
     );
   }
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-[760px] w-full text-left">
+      <table className="min-w-[860px] w-full text-left">
         <thead>
           <tr className="text-xs text-gray-500 bg-gray-50">
             <th className="px-3 py-3 font-semibold">Food</th>
@@ -78,6 +80,7 @@ export function ParticipantSessionTable({
             <th className="px-3 py-3 font-semibold">Started</th>
             <th className="px-3 py-3 font-semibold">Ended</th>
             <th className="px-3 py-3 font-semibold">Status</th>
+            <th className="px-3 py-3 font-semibold">Validity</th>
             <th className="px-3 py-3 font-semibold">Survey</th>
             <th className="px-3 py-3 font-semibold">Frames</th>
             <th className="px-3 py-3 font-semibold" />
@@ -86,6 +89,7 @@ export function ParticipantSessionTable({
         <tbody>
           {sessions.map((session) => {
             const imgSrc = toApiUrl(session.foodImageUrl);
+            const isInvalidated = session.invalidatedAt != null;
             return (
               <tr key={session.id} className="border-t border-gray-100">
                 <td className="px-3 py-3">
@@ -122,6 +126,18 @@ export function ParticipantSessionTable({
                   >
                     {formatStatus(session.status)}
                   </span>
+                </td>
+                <td className="px-3 py-3">
+                  {isInvalidated ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-red-100 text-red-700 border border-red-200">
+                      Invalid
+                      <InfoTip term="invalidated" />
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-green-50 text-green-700 border border-green-200">
+                      Valid
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-3 text-xs text-gray-700">
                   {session.hasSurvey && session.survey?.overall != null ? (

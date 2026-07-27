@@ -18,6 +18,7 @@ type Participant = {
   testerLabel: string | null;
   age: number | null;
   gender: string | null;
+  dietaryRestrictions: string | null;
   createdAt: string | null;
 };
 
@@ -57,7 +58,7 @@ export default function ParticipantDetail() {
   useEffect(() => {
     if (!Number.isFinite(participantId)) {
       setLoading(false);
-      setError("Invalid participant.");
+      setError("Invalid taster.");
       return;
     }
 
@@ -73,11 +74,11 @@ export default function ParticipantDetail() {
         ]);
         const profileJson = await profileRes.json().catch(() => null);
         if (!profileRes.ok || !profileJson?.ok) {
-          throw new Error(profileJson?.error || "Failed to load participant.");
+          throw new Error(profileJson?.error || "Failed to load taster.");
         }
         const sessionsJson = await sessionsRes.json().catch(() => null);
         if (!sessionsRes.ok || !sessionsJson?.ok) {
-          throw new Error(sessionsJson?.error || "Failed to load participant sessions.");
+          throw new Error(sessionsJson?.error || "Failed to load taster sessions.");
         }
 
         setParticipant(profileJson.participant as Participant);
@@ -86,7 +87,7 @@ export default function ParticipantDetail() {
         setSessions((sessionsJson.sessions ?? []) as ParticipantSessionRow[]);
       } catch (err: any) {
         if (err?.name === "AbortError") return;
-        setError(err?.message || "Failed to load participant.");
+        setError(err?.message || "Failed to load taster.");
         setParticipant(null);
         setSessions([]);
       } finally {
@@ -133,7 +134,7 @@ export default function ParticipantDetail() {
     if (!participant) return;
     const label = values.testerLabel.trim();
     if (!label) {
-      setFormError("Participant label is required.");
+      setFormError("Taster label is required.");
       return;
     }
 
@@ -162,17 +163,18 @@ export default function ParticipantDetail() {
           testerLabel: label,
           age,
           gender: values.gender || null,
+          dietaryRestrictions: values.dietaryRestrictions.trim() || null,
         }),
       });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok || !json?.participant) {
-        throw new Error(json?.error || "Failed to update participant.");
+        throw new Error(json?.error || "Failed to update taster.");
       }
       setParticipant(json.participant as Participant);
       setEditOpen(false);
-      setToast("Participant updated");
+      setToast("Taster updated");
     } catch (err: any) {
-      setFormError(err?.message || "Failed to update participant.");
+      setFormError(err?.message || "Failed to update taster.");
     } finally {
       setFormSaving(false);
     }
@@ -186,11 +188,11 @@ export default function ParticipantDetail() {
       const res = await apiFetch(`/api/participants/${participant.id}`, { method: "DELETE" });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) {
-        throw new Error(json?.error || "Failed to delete participant.");
+        throw new Error(json?.error || "Failed to delete taster.");
       }
       navigate("/participants", { replace: true });
     } catch (err: any) {
-      setDeleteError(err?.message || "Failed to delete participant.");
+      setDeleteError(err?.message || "Failed to delete taster.");
     } finally {
       setDeletePending(false);
     }
@@ -199,7 +201,7 @@ export default function ParticipantDetail() {
   return (
     <PageHeader
       variant="collapsed"
-      backLabel="Back to Participants"
+      backLabel="Back to Tasters"
       backTo="/participants"
     >
       {toast ? (
@@ -211,15 +213,15 @@ export default function ParticipantDetail() {
       <main className="px-6 py-8">
         <div className="max-w-5xl mx-auto">
           <PageTitle
-            title={participant?.testerLabel ?? (loading ? "Loading…" : `Participant P-${participantId}`)}
-            subtitle="Participant profile and session history"
+            title={participant?.testerLabel ?? (loading ? "Loading…" : `Taster P-${participantId}`)}
+            subtitle="Taster profile and session history"
             hideBack
           />
 
           {loading ? (
-            <div className="text-center text-gray-500 text-sm py-10">Loading participant…</div>
+            <div className="text-center text-gray-500 text-sm py-10">Loading taster…</div>
           ) : error || !participant ? (
-            <div className="text-center text-red-600 text-sm py-10">{error ?? "Participant not found."}</div>
+            <div className="text-center text-red-600 text-sm py-10">{error ?? "Taster not found."}</div>
           ) : (
             <div className="space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
@@ -262,16 +264,25 @@ export default function ParticipantDetail() {
               </div>
 
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+                <h2 className="text-sm font-bold text-gray-900 mb-1">Dietary restrictions</h2>
+                <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                  {participant.dietaryRestrictions?.trim()
+                    ? participant.dietaryRestrictions
+                    : "None recorded."}
+                </p>
+              </div>
+
+              <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
                 <h2 className="text-sm font-bold text-gray-900 mb-1">Foods Tasted</h2>
                 <p className="text-xs text-gray-500 mb-4">
-                  Distinct foods tried across all of this participant's sessions.
+                  Distinct foods tried across all of this taster's sessions.
                 </p>
                 <FoodsTastedChips foods={foodsTasted} />
               </div>
 
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
                 <h2 className="text-sm font-bold text-gray-900 mb-1">Session History</h2>
-                <p className="text-xs text-gray-500 mb-4">Every tasting session for this participant.</p>
+                <p className="text-xs text-gray-500 mb-4">Every tasting session for this taster.</p>
                 <ParticipantSessionTable
                   sessions={sessions}
                   onOpenSession={(sessionId) => navigate(`/session-detail?sessionId=${sessionId}`)}
@@ -289,6 +300,7 @@ export default function ParticipantDetail() {
             testerLabel: participant.testerLabel,
             age: participant.age,
             gender: participant.gender,
+            dietaryRestrictions: participant.dietaryRestrictions,
           }}
           saving={formSaving}
           error={formError}

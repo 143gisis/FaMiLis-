@@ -83,6 +83,19 @@ async function applyMigrations(pool) {
       `ALTER TABLE sessions ADD INDEX idx_session_participant_food_invalidated (participant_id, food_id, invalidated_at)`
     );
   }
+
+  // CAP2 P2e: participant dietary notes + consent ethics screening.
+  if (!(await columnExists(pool, "participants", "dietary_restrictions"))) {
+    await pool.query(
+      `ALTER TABLE participants ADD COLUMN dietary_restrictions TEXT NULL AFTER gender`
+    );
+  }
+  if (!(await columnExists(pool, "consent", "ethics_payload"))) {
+    await pool.query(`ALTER TABLE consent ADD COLUMN ethics_payload JSON NULL AFTER consent_version`);
+  }
+  if (!(await columnExists(pool, "consent", "ethics_details"))) {
+    await pool.query(`ALTER TABLE consent ADD COLUMN ethics_details TEXT NULL AFTER ethics_payload`);
+  }
 }
 
 export async function initDb() {

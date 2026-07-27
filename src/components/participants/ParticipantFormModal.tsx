@@ -5,11 +5,12 @@ export type ParticipantFormValues = {
   testerLabel: string;
   age: string;
   gender: string;
+  dietaryRestrictions: string;
 };
 
 type ParticipantFormModalProps = {
   mode: "create" | "edit";
-  initial?: Pick<ParticipantListItem, "testerLabel" | "age" | "gender"> | null;
+  initial?: Pick<ParticipantListItem, "testerLabel" | "age" | "gender" | "dietaryRestrictions"> | null;
   saving?: boolean;
   error?: string | null;
   onClose: () => void;
@@ -30,11 +31,13 @@ export function ParticipantFormModal({
   const [testerLabel, setTesterLabel] = useState(initial?.testerLabel ?? "");
   const [age, setAge] = useState(initial?.age != null ? String(initial.age) : "");
   const [gender, setGender] = useState(initial?.gender ?? "");
+  const [dietaryRestrictions, setDietaryRestrictions] = useState(initial?.dietaryRestrictions ?? "");
 
   useEffect(() => {
     setTesterLabel(initial?.testerLabel ?? "");
     setAge(initial?.age != null ? String(initial.age) : "");
     setGender(initial?.gender ?? "");
+    setDietaryRestrictions(initial?.dietaryRestrictions ?? "");
   }, [initial]);
 
   const canSubmit = testerLabel.trim().length > 0 && !saving;
@@ -42,7 +45,7 @@ export function ParticipantFormModal({
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
       <div
-        className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4"
+        className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto"
         role="dialog"
         aria-modal="true"
         aria-labelledby="participant-form-title"
@@ -97,6 +100,18 @@ export function ParticipantFormModal({
               </select>
             </div>
           </div>
+          <div>
+            <label className="block text-sm text-gray-700 mb-1.5 font-semibold">
+              Dietary restrictions
+            </label>
+            <textarea
+              value={dietaryRestrictions}
+              onChange={(e) => setDietaryRestrictions(e.target.value)}
+              rows={3}
+              placeholder="Optional allergies, intolerances, or dietary notes"
+              className={`${inputClass} resize-y`}
+            />
+          </div>
         </div>
 
         {error ? <p className="text-xs text-red-600 mt-3">{error}</p> : null}
@@ -112,7 +127,7 @@ export function ParticipantFormModal({
           </button>
           <button
             type="button"
-            onClick={() => onSubmit({ testerLabel, age, gender })}
+            onClick={() => onSubmit({ testerLabel, age, gender, dietaryRestrictions })}
             disabled={!canSubmit}
             className={`flex-1 py-2 rounded-md text-sm font-semibold transition-colors ${
               canSubmit

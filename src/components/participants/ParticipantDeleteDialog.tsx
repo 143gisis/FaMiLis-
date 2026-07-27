@@ -22,7 +22,7 @@ export function ParticipantDeleteDialog({
         aria-labelledby="participant-delete-title"
       >
         <h2 id="participant-delete-title" className="text-gray-900 font-bold mb-2">
-          Delete participant?
+          Delete taster?
         </h2>
         <p className="text-sm text-gray-600">
           This permanently removes{" "}

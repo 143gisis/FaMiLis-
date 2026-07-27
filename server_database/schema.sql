@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS participants (
   tester_label VARCHAR(50), -- e.g. "T-01"
   age INT,
   gender ENUM('male', 'female', 'other'),
+  dietary_restrictions TEXT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
   CONSTRAINT chk_participant_age CHECK (age >= 0 AND age <= 120)
@@ -127,6 +128,8 @@ CREATE TABLE IF NOT EXISTS consent (
   device_id VARCHAR(36) NOT NULL,
   facial_recording BOOLEAN NOT NULL DEFAULT FALSE,
   consent_version VARCHAR(10) NOT NULL DEFAULT '1.0',
+  ethics_payload JSON NULL,
+  ethics_details TEXT NULL,
   agreed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   ip_address VARCHAR(45) NULL,
 

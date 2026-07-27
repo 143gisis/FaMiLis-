@@ -15,6 +15,10 @@ export type GlossaryTerm =
   | "sentiment"
   | "boothHandoff"
   | "participantLabel"
+  | "account"
+  | "operatorRole"
+  | "tasterAccount"
+  | "tasterSubject"
   | "overallAcceptance"
   | "faceOnly"
   | "lowConfidenceFilter"
@@ -88,11 +92,27 @@ export const GLOSSARY: Record<GlossaryTerm, GlossaryEntry> = {
   },
   boothHandoff: {
     title: "Booth handoff",
-    body: "Admin or staff starts the session and switches into the tester account automatically. Reccomended for single device testing.",
+    body: "Admin or Operator starts the session and switches into the Taster account automatically. Recommended for single-device testing.",
   },
   participantLabel: {
-    title: "Participant label",
-    body: "Stable participant ID. Reuse an existing label to continue a history, or enter a new one to create a participant.",
+    title: "Taster label",
+    body: "Stable taster reference ID. Reuse an existing label to continue a history, or enter a new one to create a taster profile.",
+  },
+  account: {
+    title: "Account",
+    body: "A login identity with a role: Admin, Operator, or Taster account. Separate from the taster subject profile used in sessions.",
+  },
+  operatorRole: {
+    title: "Operator",
+    body: "Login role for running sessions and lab workflows. Stored as staff in the system; shown as Operator in the UI.",
+  },
+  tasterAccount: {
+    title: "Taster account",
+    body: "Login role used at the booth after handoff. Distinct from the taster subject profile (label, age, gender).",
+  },
+  tasterSubject: {
+    title: "Taster",
+    body: "Subject profile for a tasting session: label, demographics, and session history. Not the same as a Taster account login.",
   },
   overallAcceptance: {
     title: "Overall acceptance",
@@ -112,7 +132,7 @@ export const GLOSSARY: Record<GlossaryTerm, GlossaryEntry> = {
   },
   compareSessions: {
     title: "Compare sessions",
-    body: "Select sibling sessions to view or compare for the same product and participant context.",
+    body: "Select sibling sessions to view or compare for the same product and taster context.",
   },
   sessionContinuation: {
     title: "Continue tasting",

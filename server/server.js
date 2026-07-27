@@ -593,6 +593,7 @@ async function start() {
           p.tester_label,
           p.age,
           p.gender,
+          p.dietary_restrictions,
           p.created_at,
           (
             SELECT COUNT(*)
@@ -628,6 +629,10 @@ async function start() {
           testerLabel: r.tester_label == null ? null : String(r.tester_label),
           age: r.age == null ? null : Number(r.age),
           gender: r.gender == null ? null : String(r.gender),
+          dietaryRestrictions:
+            r.dietary_restrictions == null || r.dietary_restrictions === ""
+              ? null
+              : String(r.dietary_restrictions),
           createdAt: toIsoOrNull(r.created_at),
           sessionCount: Number(r.session_count ?? 0),
           lastSessionAt: toIsoOrNull(r.last_session_at),
@@ -646,6 +651,8 @@ async function start() {
     const testerLabel = typeof rawLabel === "string" ? rawLabel.trim() : "";
     const ageRaw = req.body?.age;
     const genderRaw = req.body?.gender;
+    const hasDietary = Object.prototype.hasOwnProperty.call(req.body ?? {}, "dietaryRestrictions");
+    const dietaryRaw = req.body?.dietaryRestrictions;
     // Participants UI "Add" sends createOnly so duplicate labels 409 instead of upserting.
     // Setup omits this flag and keeps the existing reuse-by-label behavior.
     const createOnly = req.body?.createOnly === true;
@@ -666,11 +673,16 @@ async function start() {
     if (gender != null && !allowedGenders.has(gender)) {
       return res.status(400).json({ ok: false, error: "gender must be male, female, or other." });
     }
+    const dietaryRestrictions = !hasDietary
+      ? null
+      : dietaryRaw == null || dietaryRaw === ""
+        ? null
+        : String(dietaryRaw).trim() || null;
 
     try {
       const [[existing]] = await pool.query(
         `
-        SELECT participant_id, tester_label, age, gender, created_at
+        SELECT participant_id, tester_label, age, gender, dietary_restrictions, created_at
         FROM participants
         WHERE tester_label = ?
         LIMIT 1
@@ -689,14 +701,15 @@ async function start() {
           `
           UPDATE participants
           SET age = COALESCE(?, age),
-              gender = COALESCE(?, gender)
+              gender = COALESCE(?, gender),
+              dietary_restrictions = CASE WHEN ? THEN ? ELSE dietary_restrictions END
           WHERE participant_id = ?
         `,
-          [age, gender, Number(existing.participant_id)]
+          [age, gender, hasDietary ? 1 : 0, dietaryRestrictions, Number(existing.participant_id)]
         );
         const [[updated]] = await pool.query(
           `
-          SELECT participant_id, tester_label, age, gender, created_at
+          SELECT participant_id, tester_label, age, gender, dietary_restrictions, created_at
           FROM participants
           WHERE participant_id = ?
           LIMIT 1
@@ -710,6 +723,10 @@ async function start() {
             testerLabel: updated.tester_label == null ? null : String(updated.tester_label),
             age: updated.age == null ? null : Number(updated.age),
             gender: updated.gender == null ? null : String(updated.gender),
+            dietaryRestrictions:
+              updated.dietary_restrictions == null || updated.dietary_restrictions === ""
+                ? null
+                : String(updated.dietary_restrictions),
             createdAt: toIsoOrNull(updated.created_at),
           },
           reused: true,
@@ -717,8 +734,8 @@ async function start() {
       }
 
       const [result] = await pool.query(
-        `INSERT INTO participants (tester_label, age, gender) VALUES (?, ?, ?)`,
-        [testerLabel, age, gender]
+        `INSERT INTO participants (tester_label, age, gender, dietary_restrictions) VALUES (?, ?, ?, ?)`,
+        [testerLabel, age, gender, dietaryRestrictions]
       );
       return res.json({
         ok: true,
@@ -727,6 +744,7 @@ async function start() {
           testerLabel,
           age,
           gender,
+          dietaryRestrictions,
           createdAt: new Date().toISOString(),
         },
         reused: false,
@@ -747,8 +765,11 @@ async function start() {
     const hasLabel = Object.prototype.hasOwnProperty.call(req.body ?? {}, "testerLabel");
     const hasAge = Object.prototype.hasOwnProperty.call(req.body ?? {}, "age");
     const hasGender = Object.prototype.hasOwnProperty.call(req.body ?? {}, "gender");
-    if (!hasLabel && !hasAge && !hasGender) {
-      return res.status(400).json({ ok: false, error: "Provide testerLabel, age, and/or gender." });
+    const hasDietary = Object.prototype.hasOwnProperty.call(req.body ?? {}, "dietaryRestrictions");
+    if (!hasLabel && !hasAge && !hasGender && !hasDietary) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "Provide testerLabel, age, gender, and/or dietaryRestrictions." });
     }
 
     let testerLabel = undefined;
@@ -787,10 +808,17 @@ async function start() {
       }
     }
 
+    let dietaryRestrictions = undefined;
+    if (hasDietary) {
+      const dietaryRaw = req.body?.dietaryRestrictions;
+      dietaryRestrictions =
+        dietaryRaw == null || dietaryRaw === "" ? null : String(dietaryRaw).trim() || null;
+    }
+
     try {
       const [[existing]] = await pool.query(
         `
-        SELECT participant_id, tester_label, age, gender, created_at
+        SELECT participant_id, tester_label, age, gender, dietary_restrictions, created_at
         FROM participants
         WHERE participant_id = ?
         LIMIT 1
@@ -822,19 +850,21 @@ async function start() {
       const nextLabel = testerLabel !== undefined ? testerLabel : existing.tester_label;
       const nextAge = age !== undefined ? age : existing.age;
       const nextGender = gender !== undefined ? gender : existing.gender;
+      const nextDietary =
+        dietaryRestrictions !== undefined ? dietaryRestrictions : existing.dietary_restrictions;
 
       await pool.query(
         `
         UPDATE participants
-        SET tester_label = ?, age = ?, gender = ?
+        SET tester_label = ?, age = ?, gender = ?, dietary_restrictions = ?
         WHERE participant_id = ?
       `,
-        [nextLabel, nextAge, nextGender, participantId]
+        [nextLabel, nextAge, nextGender, nextDietary, participantId]
       );
 
       const [[updated]] = await pool.query(
         `
-        SELECT participant_id, tester_label, age, gender, created_at
+        SELECT participant_id, tester_label, age, gender, dietary_restrictions, created_at
         FROM participants
         WHERE participant_id = ?
         LIMIT 1
@@ -849,6 +879,10 @@ async function start() {
           testerLabel: updated.tester_label == null ? null : String(updated.tester_label),
           age: updated.age == null ? null : Number(updated.age),
           gender: updated.gender == null ? null : String(updated.gender),
+          dietaryRestrictions:
+            updated.dietary_restrictions == null || updated.dietary_restrictions === ""
+              ? null
+              : String(updated.dietary_restrictions),
           createdAt: toIsoOrNull(updated.created_at),
         },
       });
@@ -908,7 +942,7 @@ async function start() {
     try {
       const [[row]] = await pool.query(
         `
-        SELECT participant_id, tester_label, age, gender, created_at
+        SELECT participant_id, tester_label, age, gender, dietary_restrictions, created_at
         FROM participants
         WHERE participant_id = ?
         LIMIT 1
@@ -936,6 +970,10 @@ async function start() {
           testerLabel: row.tester_label == null ? null : String(row.tester_label),
           age: row.age == null ? null : Number(row.age),
           gender: row.gender == null ? null : String(row.gender),
+          dietaryRestrictions:
+            row.dietary_restrictions == null || row.dietary_restrictions === ""
+              ? null
+              : String(row.dietary_restrictions),
           createdAt: toIsoOrNull(row.created_at),
         },
         sessionCount: Number(stats?.session_count ?? 0),
@@ -972,6 +1010,7 @@ async function start() {
           fp.category AS food_category,
           fp.image_url AS food_image_url,
           s.status,
+          s.invalidated_at,
           s.start_time,
           s.end_time,
           sr.session_id AS survey_session_id,
@@ -1000,6 +1039,7 @@ async function start() {
           foodCategory: r.food_category == null ? null : String(r.food_category),
           foodImageUrl: r.food_image_url == null ? null : String(r.food_image_url),
           status: r.status,
+          invalidatedAt: toIsoOrNull(r.invalidated_at),
           startTime: toIsoOrNull(r.start_time),
           endTime: toIsoOrNull(r.end_time),
           hasSurvey: r.survey_session_id != null,
@@ -1054,7 +1094,15 @@ async function start() {
 
   // Log a participant's facial-recording consent (audit trail).
   app.post("/api/consent", async (req, res) => {
-    const { sessionId, participantId, deviceId, facialRecording, consentVersion } = req.body ?? {};
+    const {
+      sessionId,
+      participantId,
+      deviceId,
+      facialRecording,
+      consentVersion,
+      ethics,
+      ethicsDetails,
+    } = req.body ?? {};
 
     const device = typeof deviceId === "string" ? deviceId.trim() : "";
     if (!device) {
@@ -1074,8 +1122,53 @@ async function start() {
       return res.status(400).json({ ok: false, error: "Invalid sessionId or participantId." });
     }
 
+    const ETHICS_KEYS = [
+      "foodAllergies",
+      "intolerances",
+      "medicalDietary",
+      "religiousCultural",
+      "healthToday",
+      "recentFoodMedication",
+    ];
+    const ethicsSource =
+      ethics && typeof ethics === "object" && !Array.isArray(ethics)
+        ? ethics
+        : req.body?.ethicsAnswers &&
+            typeof req.body.ethicsAnswers === "object" &&
+            !Array.isArray(req.body.ethicsAnswers)
+          ? req.body.ethicsAnswers
+          : null;
+
+    if (!ethicsSource) {
+      return res.status(400).json({
+        ok: false,
+        error: "ethics answers object is required (all six screening questions).",
+      });
+    }
+    const ethicsPayload = {};
+    for (const key of ETHICS_KEYS) {
+      if (typeof ethicsSource[key] !== "boolean") {
+        return res.status(400).json({
+          ok: false,
+          error: `ethics.${key} must be a boolean (all six screening answers required).`,
+        });
+      }
+      ethicsPayload[key] = ethicsSource[key];
+    }
+
+    const detailsRaw = ethicsDetails;
+    const ethicsDetailsValue =
+      detailsRaw == null || detailsRaw === ""
+        ? null
+        : typeof detailsRaw === "string"
+          ? detailsRaw.trim() || null
+          : String(detailsRaw).trim() || null;
+
+    // Consent 1.1 includes ethics screening; bump default when ethics is present.
     const version =
-      typeof consentVersion === "string" && consentVersion.trim() ? consentVersion.trim() : "1.0";
+      typeof consentVersion === "string" && consentVersion.trim()
+        ? consentVersion.trim()
+        : "1.1";
 
     try {
       if (sId != null) {
@@ -1092,10 +1185,22 @@ async function start() {
       const agreedAt = new Date();
       const [result] = await pool.query(
         `
-        INSERT INTO consent (session_id, participant_id, device_id, facial_recording, consent_version, ip_address)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO consent (
+          session_id, participant_id, device_id, facial_recording, consent_version,
+          ethics_payload, ethics_details, ip_address
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
-        [sId, pId, device, true, version, ipAddress]
+        [
+          sId,
+          pId,
+          device,
+          true,
+          version,
+          JSON.stringify(ethicsPayload),
+          ethicsDetailsValue,
+          ipAddress,
+        ]
       );
 
       // Reset session clock so elapsed time excludes the consent step.
@@ -1117,6 +1222,8 @@ async function start() {
           deviceId: device,
           facialRecording: true,
           consentVersion: version,
+          ethics: ethicsPayload,
+          ethicsDetails: ethicsDetailsValue,
           agreedAt: sessionStartTime ?? agreedAt.toISOString(),
         },
         sessionStartTime,
@@ -2086,123 +2193,6 @@ async function start() {
         });
       } catch (err) {
         console.error("POST /api/sessions/:sessionId/frames error:", err);
-        return res.status(500).json({ ok: false, error: "Server error." });
-      }
-    }
-  );
-
-  // Manual QA: update face / confidence / hedonic on a single frame log
-  app.patch(
-    "/api/sessions/:sessionId/frames/:frameLogId",
-    requireRole("admin", "staff"),
-    async (req, res) => {
-      const sessionId = Number.parseInt(req.params.sessionId, 10);
-      const frameLogId = Number.parseInt(req.params.frameLogId, 10);
-      if (!Number.isFinite(sessionId)) {
-        return res.status(400).json({ ok: false, error: "Invalid sessionId." });
-      }
-      if (!Number.isFinite(frameLogId)) {
-        return res.status(400).json({ ok: false, error: "Invalid frameLogId." });
-      }
-
-      const body = req.body ?? {};
-      const hasFace = Object.prototype.hasOwnProperty.call(body, "faceDetected");
-      const hasConf = Object.prototype.hasOwnProperty.call(body, "confidenceScore");
-      const hasHedonic = Object.prototype.hasOwnProperty.call(body, "hedonicScore");
-      if (!hasFace && !hasConf && !hasHedonic) {
-        return res.status(400).json({
-          ok: false,
-          error: "Provide faceDetected, confidenceScore, and/or hedonicScore.",
-        });
-      }
-
-      let faceDetected;
-      if (hasFace) {
-        if (body.faceDetected !== null && typeof body.faceDetected !== "boolean") {
-          return res.status(400).json({ ok: false, error: "faceDetected must be a boolean or null." });
-        }
-        faceDetected = body.faceDetected;
-      }
-
-      let confidenceScore;
-      if (hasConf) {
-        const parsed = parseOptionalScore01(body.confidenceScore, "confidenceScore");
-        if (!parsed.ok) return res.status(400).json({ ok: false, error: parsed.error });
-        confidenceScore = parsed.value;
-      }
-
-      let hedonicScore;
-      if (hasHedonic) {
-        const parsed = parseOptionalScore01(body.hedonicScore, "hedonicScore");
-        if (!parsed.ok) return res.status(400).json({ ok: false, error: parsed.error });
-        hedonicScore = parsed.value;
-      }
-
-      try {
-        const [[existing]] = await pool.query(
-          `
-          SELECT
-            frame_log_id,
-            session_id,
-            timestamp,
-            face_detected,
-            confidence_score,
-            hedonic_score,
-            frame_image_url
-          FROM frame_logs
-          WHERE frame_log_id = ? AND session_id = ?
-          LIMIT 1
-          `,
-          [frameLogId, sessionId]
-        );
-        if (!existing) {
-          return res.status(404).json({ ok: false, error: "Frame not found for this session." });
-        }
-
-        const nextFace = hasFace ? faceDetected : existing.face_detected;
-        const nextConf = hasConf ? confidenceScore : existing.confidence_score;
-        const nextHedonic = hasHedonic ? hedonicScore : existing.hedonic_score;
-
-        await pool.query(
-          `
-          UPDATE frame_logs
-          SET face_detected = ?, confidence_score = ?, hedonic_score = ?
-          WHERE frame_log_id = ? AND session_id = ?
-          `,
-          [nextFace, nextConf, nextHedonic, frameLogId, sessionId]
-        );
-
-        const [[updated]] = await pool.query(
-          `
-          SELECT
-            frame_log_id,
-            timestamp,
-            face_detected,
-            confidence_score,
-            hedonic_score,
-            frame_image_url
-          FROM frame_logs
-          WHERE frame_log_id = ?
-          LIMIT 1
-          `,
-          [frameLogId]
-        );
-
-        const metrics = await getSessionFrameMetrics(sessionId);
-        const actor = req.user?.username || req.user?.id || "unknown";
-        void writeSystemLog(pool, {
-          sessionId,
-          logType: "info",
-          message: `Frame ${frameLogId} manually updated by ${actor}.`,
-        });
-
-        return res.json({
-          ok: true,
-          frame: mapFrameLogRow(updated),
-          metrics,
-        });
-      } catch (err) {
-        console.error("PATCH /api/sessions/:sessionId/frames/:frameLogId error:", err);
         return res.status(500).json({ ok: false, error: "Server error." });
       }
     }

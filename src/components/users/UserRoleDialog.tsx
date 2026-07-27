@@ -56,8 +56,8 @@ export function UserRoleDialog({
             className={inputClass}
           >
             <option value="admin">Admin</option>
-            <option value="staff">Staff</option>
-            <option value="tester">Tester</option>
+            <option value="staff">Operator</option>
+            <option value="tester">Taster</option>
           </select>
         </div>
 

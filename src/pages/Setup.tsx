@@ -269,7 +269,7 @@ export default function Setup() {
       });
       const participantJson = await participantRes.json().catch(() => null);
       if (!participantRes.ok || !participantJson?.ok || !participantJson?.participant?.id) {
-        throw new Error(participantJson?.error || "Failed to register participant.");
+        throw new Error(participantJson?.error || "Failed to register taster.");
       }
       const createdParticipantId = Number(participantJson.participant.id);
 
@@ -337,7 +337,7 @@ export default function Setup() {
       });
       const loginJson = await loginRes.json().catch(() => null);
       if (!loginRes.ok || !loginJson?.ok) {
-        setHandoffError(loginJson?.error || "Wrong participant credentials.");
+        setHandoffError(loginJson?.error || "Wrong Taster account credentials.");
         return;
       }
 
@@ -353,7 +353,7 @@ export default function Setup() {
       });
       const participantJson = await participantRes.json().catch(() => null);
       if (!participantRes.ok || !participantJson?.ok || !participantJson?.participant?.id) {
-        setHandoffError(participantJson?.error || "Failed to register participant.");
+        setHandoffError(participantJson?.error || "Failed to register taster.");
         return;
       }
 
@@ -447,13 +447,13 @@ export default function Setup() {
                 <div className="flex items-center justify-between mb-2">
                   <div className="inline-flex items-center gap-1.5">
                     <label className="text-sm text-gray-700 font-semibold">
-                      Participant Label / ID <span className="text-[#e8174a]">*</span>
+                      Taster Label / ID <span className="text-[#e8174a]">*</span>
                     </label>
                     <InfoTip term="participantLabel" align="left" />
                   </div>
                   {isParticipantLocked ? (
                     <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#fde8ed] text-[#c9143f]">
-                      From participant profile
+                      From taster profile
                     </span>
                   ) : null}
                 </div>
@@ -475,8 +475,8 @@ export default function Setup() {
                 </datalist>
                 <p className="text-[11px] text-gray-500 mt-2">
                   {isParticipantLocked
-                    ? "Demographics are locked to keep this participant's history consistent."
-                    : "Enter an existing label to reuse a participant, or a new one to create it. Matching participants auto-fill age/gender."}
+                    ? "Demographics are locked to keep this taster's history consistent."
+                    : "Enter an existing label to reuse a taster, or a new one to create it. Matching tasters auto-fill age/gender."}
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
                   <input
@@ -507,7 +507,7 @@ export default function Setup() {
               {/* Consent panel */}
               <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                 <div className="flex items-center justify-between mb-1">
-                  <h3 className="text-sm text-gray-900 font-bold">Participant Consent</h3>
+                  <h3 className="text-sm text-gray-900 font-bold">Taster Consent</h3>
                   <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
                     allConsentChecked
                       ? "bg-green-50 text-green-700"
@@ -556,14 +556,14 @@ export default function Setup() {
                     <InfoTip term="boothHandoff" align="left" />
                   </p>
                   <p className="text-[11px] text-gray-500 mb-3">
-                    Enter participant login to start the session and switch accounts automatically.
+                    Enter Taster account email to start the session and switch accounts automatically.
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <input
                       type="email"
                       value={handoffEmail}
                       onChange={(e) => setHandoffEmail(e.target.value)}
-                      placeholder="tester@familis.com"
+                      placeholder="taster@familis.com"
                       autoComplete="off"
                       className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white"
                     />
@@ -571,7 +571,7 @@ export default function Setup() {
                       type="password"
                       value={handoffPassword}
                       onChange={(e) => setHandoffPassword(e.target.value)}
-                      placeholder="Participant password"
+                      placeholder="Taster account password"
                       autoComplete="new-password"
                       className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white"
                     />
@@ -665,7 +665,7 @@ export default function Setup() {
                       : !selectedFoodId
                         ? "Select a food product to continue"
                         : !participantLabel.trim()
-                          ? "Enter a participant label to continue"
+                          ? "Enter a taster label to continue"
                           : "Complete all required fields"}
                   </p>
                 )}

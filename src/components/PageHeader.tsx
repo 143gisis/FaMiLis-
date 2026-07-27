@@ -172,14 +172,14 @@ export function PageHeader({
     },
     {
       key: "users",
-      label: "User Management",
+      label: "Account Management",
       to: "/admin/users",
       visible: canSeeUsers,
       icon: IconUsers,
     },
     {
       key: "participants",
-      label: "Participant Management",
+      label: "Taster Management",
       to: "/participants",
       visible: canSeeParticipants,
       icon: IconParticipants,

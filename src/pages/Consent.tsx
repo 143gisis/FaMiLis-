@@ -4,7 +4,7 @@ import { FAMILIS_CURRENT_SESSION_KEY, markSessionConsented, performLogout } from
 import { apiFetch } from "../lib/api";
 import { BrandTopBar } from "../components/BrandTopBar";
 
-const CONSENT_VERSION = "1.0";
+const CONSENT_VERSION = "1.1";
 const DEVICE_ID_KEY = "familis.deviceId";
 
 const CONSENT_ITEMS = [
@@ -31,13 +31,51 @@ const CONSENT_ITEMS = [
   },
 ];
 
+const ETHICS_ITEMS = [
+  {
+    key: "foodAllergies" as const,
+    label: "Do you have any food allergies?",
+  },
+  {
+    key: "intolerances" as const,
+    label: "Do you have any food intolerances or sensitivities?",
+  },
+  {
+    key: "medicalDietary" as const,
+    label: "Do you have any medical or dietary restrictions?",
+  },
+  {
+    key: "religiousCultural" as const,
+    label: "Do you have any religious or cultural dietary restrictions?",
+  },
+  {
+    key: "healthToday" as const,
+    label: "Do you have any health condition today that may affect tasting?",
+  },
+  {
+    key: "recentFoodMedication" as const,
+    label: "Have you recently consumed food or medication that may affect taste perception?",
+  },
+];
+
 type ConsentState = Record<(typeof CONSENT_ITEMS)[number]["key"], boolean>;
+type EthicsKey = (typeof ETHICS_ITEMS)[number]["key"];
+type EthicsState = Record<EthicsKey, boolean | null>;
 
 const DEFAULT_CONSENT: ConsentState = {
   facialRecording: false,
   dataUsage: false,
   participant: false,
   dataStorage: false,
+};
+
+const DEFAULT_ETHICS: EthicsState = {
+  foodAllergies: null,
+  intolerances: null,
+  medicalDietary: null,
+  religiousCultural: null,
+  healthToday: null,
+  recentFoodMedication: null,
 };
 
 type StoredSession = {
@@ -76,6 +114,8 @@ export default function Consent() {
   const [sessionLookupDone, setSessionLookupDone] = useState(storedSession !== null);
   const [foodName, setFoodName] = useState<string | null>(null);
   const [consent, setConsent] = useState<ConsentState>(DEFAULT_CONSENT);
+  const [ethics, setEthics] = useState<EthicsState>(DEFAULT_ETHICS);
+  const [ethicsDetails, setEthicsDetails] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -139,12 +179,19 @@ export default function Consent() {
   const consentCount = Object.values(consent).filter(Boolean).length;
   const consentTotal = CONSENT_ITEMS.length;
   const allConsentChecked = consentCount === consentTotal;
+  const ethicsAnswered = ETHICS_ITEMS.every((item) => typeof ethics[item.key] === "boolean");
+  const anyEthicsYes = ETHICS_ITEMS.some((item) => ethics[item.key] === true);
+  const canContinue = allConsentChecked && ethicsAnswered;
 
   const handleSubmit = async () => {
-    if (!allConsentChecked || !storedSession?.id) return;
+    if (!canContinue || !storedSession?.id) return;
     setSubmitting(true);
     setError(null);
     try {
+      const ethicsAnswers = Object.fromEntries(
+        ETHICS_ITEMS.map((item) => [item.key, ethics[item.key] as boolean])
+      ) as Record<EthicsKey, boolean>;
+
       const res = await apiFetch(`/api/consent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -154,6 +201,8 @@ export default function Consent() {
           deviceId: getDeviceId(),
           facialRecording: true,
           consentVersion: CONSENT_VERSION,
+          ethics: ethicsAnswers,
+          ethicsDetails: anyEthicsYes ? ethicsDetails.trim() || null : null,
         }),
       });
       const json = await res.json().catch(() => null);
@@ -214,7 +263,7 @@ export default function Consent() {
                 )}
               </div>
               <p className="text-xs font-semibold uppercase tracking-wider text-[#e8174a] mb-2">
-                Participant Consent
+                Taster Consent
               </p>
               <h1 className="text-xl font-bold text-gray-900">
                 {!sessionLookupDone ? "Looking for session…" : "No active session"}
@@ -229,7 +278,7 @@ export default function Consent() {
             <>
               <div className="text-center mb-6">
                 <p className="text-xs font-semibold uppercase tracking-wider text-[#e8174a] mb-2">
-                  Participant Consent
+                  Taster Consent
                 </p>
                 <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Before we begin</h1>
                 <p className="text-sm text-gray-600 mt-1">
@@ -239,7 +288,7 @@ export default function Consent() {
 
               <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
                 <div className="flex items-center justify-between mb-1">
-                  <h3 className="text-sm text-gray-900 font-bold">Participant Consent</h3>
+                  <h3 className="text-sm text-gray-900 font-bold">Taster Consent</h3>
                   <span
                     className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
                       allConsentChecked ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-500"
@@ -274,12 +323,46 @@ export default function Consent() {
                   ))}
                 </div>
 
+                <div className="mt-6 pt-5 border-t border-gray-100">
+                  <h3 className="text-sm text-gray-900 font-bold mb-1">Health &amp; dietary screening</h3>
+                  <p className="text-[11px] text-gray-500 mb-4">
+                    Please answer all six questions. Optional details can be added if you answer Yes to any.
+                  </p>
+
+                  <div className="space-y-3">
+                    {ETHICS_ITEMS.map((item) => (
+                      <EthicsRow
+                        key={item.key}
+                        label={item.label}
+                        value={ethics[item.key]}
+                        onChange={(value) => setEthics((p) => ({ ...p, [item.key]: value }))}
+                      />
+                    ))}
+                  </div>
+
+                  {anyEthicsYes ? (
+                    <div className="mt-4">
+                      <label className="block text-sm text-gray-700 mb-1.5 font-semibold" htmlFor="ethics-details">
+                        Optional details
+                      </label>
+                      <textarea
+                        id="ethics-details"
+                        value={ethicsDetails}
+                        onChange={(e) => setEthicsDetails(e.target.value)}
+                        rows={3}
+                        placeholder="Briefly describe allergies, restrictions, or anything relevant to tasting today."
+                        className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white resize-y"
+                      />
+                    </div>
+                  ) : null}
+                </div>
+
                 <button
                   type="button"
                   onClick={handleSubmit}
-                  disabled={!allConsentChecked || submitting}
+                  disabled={!canContinue || submitting}
                   className={`mt-5 w-full py-3.5 rounded-lg text-sm font-bold transition-colors ${
-                    allConsentChecked && !submitting
+                    canContinue && !submitting
                       ? "bg-[#e8174a] hover:bg-[#c9143f] text-white shadow-sm"
                       : "bg-gray-200 text-gray-400 cursor-not-allowed"
                   }`}
@@ -287,9 +370,11 @@ export default function Consent() {
                   {submitting ? "Saving consent…" : "I Agree, Continue to Session"}
                 </button>
 
-                {!allConsentChecked && (
+                {!canContinue && (
                   <p className="text-[11px] text-gray-500 text-center mt-2">
-                    {consentCount} of {consentTotal} consent items checked
+                    {!allConsentChecked
+                      ? `${consentCount} of ${consentTotal} consent items checked`
+                      : "Answer all six health & dietary screening questions"}
                   </p>
                 )}
                 {error ? <p className="text-xs text-red-600 text-center mt-2">{error}</p> : null}
@@ -346,5 +431,45 @@ function ConsentRow({
         {helper && <span className="text-[11px] text-gray-500 block mt-0.5 leading-relaxed">{helper}</span>}
       </div>
     </label>
+  );
+}
+
+function EthicsRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: boolean | null;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <div className="p-3 rounded-lg border border-gray-100 bg-gray-50/60">
+      <p className="text-sm font-medium text-gray-800 mb-2">{label}</p>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => onChange(true)}
+          className={`flex-1 py-2 rounded-md text-sm font-semibold border transition-colors ${
+            value === true
+              ? "bg-[#e8174a] border-[#e8174a] text-white"
+              : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
+          }`}
+        >
+          Yes
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange(false)}
+          className={`flex-1 py-2 rounded-md text-sm font-semibold border transition-colors ${
+            value === false
+              ? "bg-gray-800 border-gray-800 text-white"
+              : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
+          }`}
+        >
+          No
+        </button>
+      </div>
+    </div>
   );
 }
