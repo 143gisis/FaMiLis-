@@ -181,6 +181,8 @@ export default function SessionDetail() {
   const [deletePending, setDeletePending] = useState(false);
   const [invalidateOpen, setInvalidateOpen] = useState(false);
   const [invalidatePending, setInvalidatePending] = useState(false);
+  const [revalidateOpen, setRevalidateOpen] = useState(false);
+  const [revalidatePending, setRevalidatePending] = useState(false);
   const [siblingSessions, setSiblingSessions] = useState<SessionOption[]>([]);
   const [siblingSessionsLoading, setSiblingSessionsLoading] = useState(false);
   const [selectedSessionIds, setSelectedSessionIds] = useState<number[]>([]);
@@ -429,6 +431,37 @@ export default function SessionDetail() {
     }
   };
 
+  const onRevalidateSession = async () => {
+    if (!content) return;
+    setRevalidatePending(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/api/sessions/${content.session.id}/revalidate`, { method: "POST" });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok || !json?.session) {
+        throw new Error(json?.error || "Failed to revalidate session.");
+      }
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              session: {
+                ...prev.session,
+                status: json.session.status,
+                invalidatedAt: json.session.invalidatedAt,
+                retentionStatus: json.session.retentionStatus,
+              },
+            }
+          : prev
+      );
+    } catch (err: any) {
+      setError(err?.message || "Failed to revalidate session.");
+    } finally {
+      setRevalidatePending(false);
+      setRevalidateOpen(false);
+    }
+  };
+
   const applyFrameMetrics = (
     prev: SessionDetailPayload,
     metrics: SessionDetailPayload["metrics"]
@@ -604,14 +637,25 @@ export default function SessionDetail() {
                       </option>
                     ))}
                   </select>
-                  <button
-                    type="button"
-                    onClick={() => setInvalidateOpen(true)}
-                    disabled={!!content.session.invalidatedAt || invalidatePending}
-                    className="text-sm font-semibold border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-md px-3 py-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    {content.session.invalidatedAt ? "Invalidated" : "Invalidate"}
-                  </button>
+                  {content.session.invalidatedAt ? (
+                    <button
+                      type="button"
+                      onClick={() => setRevalidateOpen(true)}
+                      disabled={revalidatePending}
+                      className="text-sm font-semibold border border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-md px-3 py-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Revalidate
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setInvalidateOpen(true)}
+                      disabled={invalidatePending}
+                      className="text-sm font-semibold border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-md px-3 py-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Invalidate
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setDeleteOpen(true)}
@@ -981,9 +1025,9 @@ export default function SessionDetail() {
               Invalidate this session?
             </h2>
             <p className="text-sm text-gray-600">
-              This marks session <span className="font-semibold">S-{content.session.id}</span> for deletion.
-              Frame data will be removed per the retention policy, and no new frames can be recorded. The
-              session is not deleted immediately.
+              This marks session <span className="font-semibold">S-{content.session.id}</span> as
+              unusable for reports. It is excluded from analytics and exports, and no new frames can be
+              recorded. The session is not deleted immediately.
             </p>
             <div className="flex gap-3 mt-5">
               <button
@@ -1001,6 +1045,44 @@ export default function SessionDetail() {
                 className="flex-1 bg-amber-500 hover:bg-amber-600 text-white py-2 rounded-md text-sm font-semibold transition-colors disabled:opacity-60"
               >
                 {invalidatePending ? "Invalidating…" : "Invalidate"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {revalidateOpen && content ? (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div
+            className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="session-revalidate-title"
+          >
+            <h2 id="session-revalidate-title" className="text-gray-900 font-bold mb-2">
+              Revalidate this session?
+            </h2>
+            <p className="text-sm text-gray-600">
+              This restores session <span className="font-semibold">S-{content.session.id}</span> as the
+              valid record for this participant and food. Any other valid sessions for the same pair will
+              be invalidated and excluded from reports.
+            </p>
+            <div className="flex gap-3 mt-5">
+              <button
+                type="button"
+                onClick={() => setRevalidateOpen(false)}
+                disabled={revalidatePending}
+                className="flex-1 border border-gray-200 text-gray-700 hover:bg-gray-50 py-2 rounded-md text-sm font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={onRevalidateSession}
+                disabled={revalidatePending}
+                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-md text-sm font-semibold transition-colors disabled:opacity-60"
+              >
+                {revalidatePending ? "Revalidating…" : "Revalidate"}
               </button>
             </div>
           </div>
