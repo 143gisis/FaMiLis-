@@ -175,6 +175,9 @@ export default function Survey() {
       });
 
       const json = await res.json().catch(() => null);
+      if (res.status === 409) {
+        throw new Error(json?.error || "Survey already submitted for this session.");
+      }
       if (!res.ok || !json?.ok) {
         throw new Error(json?.error || "Failed to submit survey.");
       }
