@@ -40,6 +40,19 @@ async function columnExists(pool, table, column) {
   return rows.length > 0;
 }
 
+async function indexExists(pool, table, indexName) {
+  const [rows] = await pool.query(
+    `
+    SELECT 1
+    FROM information_schema.statistics
+    WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?
+    LIMIT 1
+  `,
+    [table, indexName]
+  );
+  return rows.length > 0;
+}
+
 // Idempotent upgrades for databases created before Phase 1 (schema.sql only
 // applies to fresh tables via CREATE TABLE IF NOT EXISTS).
 async function applyMigrations(pool) {
@@ -61,6 +74,13 @@ async function applyMigrations(pool) {
   if (!(await columnExists(pool, "users", "is_active"))) {
     await pool.query(
       `ALTER TABLE users ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1`
+    );
+  }
+
+  // Speeds sibling invalidate/revalidate lookups for the same participant+food.
+  if (!(await indexExists(pool, "sessions", "idx_session_participant_food_invalidated"))) {
+    await pool.query(
+      `ALTER TABLE sessions ADD INDEX idx_session_participant_food_invalidated (participant_id, food_id, invalidated_at)`
     );
   }
 }
