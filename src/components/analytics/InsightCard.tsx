@@ -5,7 +5,7 @@ type DefaultInsightCardProps = {
   variant?: "default";
   title: string;
   value: string;
-  sub: string;
+  sub?: string;
   infoTerm?: GlossaryTerm;
 };
 
@@ -62,7 +62,9 @@ export function InsightCard(props: InsightCardProps) {
           {props.infoTerm ? <InfoTip term={props.infoTerm} align="left" /> : null}
         </p>
         <p className="text-2xl font-extrabold text-gray-900 leading-none mb-1">{props.value}</p>
-        <p className="text-xs text-gray-500 leading-snug">{props.sub}</p>
+        {props.sub ? (
+          <p className="text-xs text-gray-500 leading-snug">{props.sub}</p>
+        ) : null}
       </div>
     </div>
   );
