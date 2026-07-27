@@ -48,7 +48,7 @@ export const GLOSSARY: Record<GlossaryTerm, GlossaryEntry> = {
   },
   invalidated: {
     title: "Invalidated",
-    body: "A session flagged as unusable for analysis, so its data may be excluded from reports.",
+    body: "A session flagged as unusable for analysis. Invalidated sessions are excluded from reports, analytics, and exports.",
   },
   retentionStatus: {
     title: "Retention status",
