@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   INDEX idx_session_user (user_id),
   INDEX idx_session_food (food_id),
   INDEX idx_session_participant (participant_id),
+  INDEX idx_session_participant_food_invalidated (participant_id, food_id, invalidated_at),
 
   CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
   CONSTRAINT fk_sessions_participant FOREIGN KEY (participant_id) REFERENCES participants(participant_id) ON DELETE SET NULL,
