@@ -293,7 +293,7 @@ export default function Survey() {
               </div>
               <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Thank you — session complete</h1>
               <p className="text-sm text-gray-600 mt-3">
-                Your ratings have been saved. You may leave the booth.
+                Your ratings have been saved. You may leave the system.
               </p>
               {food?.name ? (
                 <p className="text-sm text-gray-500 mt-2">
