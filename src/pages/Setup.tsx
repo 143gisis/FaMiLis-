@@ -53,6 +53,13 @@ const CONSENT_ITEMS = [
     helper: "All data stays on-premises. This is a lab demo — not a clinical or commercial deployment.",
     required: true,
   },
+  {
+    key: "allergyDietary" as const,
+    label: "I confirm allergy and dietary risks for this tasting have been screened or disclosed",
+    helper:
+      "Known allergies, intolerances, or dietary restrictions relevant to the selected food are recorded on the taster profile or disclosed before tasting. Lab demo acknowledgment only — not a clinical screen.",
+    required: true,
+  },
 ];
 
 type ConsentState = Record<typeof CONSENT_ITEMS[number]["key"], boolean>;
@@ -62,6 +69,7 @@ const DEFAULT_CONSENT: ConsentState = {
   dataUsage: false,
   participant: false,
   dataStorage: false,
+  allergyDietary: false,
 };
 
 type ParticipantPrefill = {
@@ -98,6 +106,7 @@ export default function Setup() {
   const [participantGender, setParticipantGender] = useState(participantPrefill?.gender ?? "");
   const [participantError, setParticipantError] = useState<string | null>(null);
   const [consent, setConsent] = useState<ConsentState>(DEFAULT_CONSENT);
+  const [consentOpen, setConsentOpen] = useState(true);
 
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -506,18 +515,60 @@ export default function Setup() {
 
               {/* Consent panel */}
               <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                <div className="flex items-center justify-between mb-1">
-                  <h3 className="text-sm text-gray-900 font-bold">Taster Consent</h3>
-                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
-                    allConsentChecked
-                      ? "bg-green-50 text-green-700"
-                      : "bg-gray-100 text-gray-500"
-                  }`}>
-                    {consentCount} of {consentTotal}
-                  </span>
+                <div className="flex items-center justify-between gap-3 mb-1">
+                  <button
+                    type="button"
+                    onClick={() => setConsentOpen((o) => !o)}
+                    aria-expanded={consentOpen}
+                    aria-controls="setup-consent-details"
+                    className="flex items-center gap-2 min-w-0 text-left group"
+                  >
+                    <svg
+                      className={`w-4 h-4 flex-shrink-0 text-gray-400 group-hover:text-gray-600 transition-transform ${
+                        consentOpen ? "rotate-90" : ""
+                      }`}
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                    <h3 className="text-sm text-gray-900 font-bold truncate">
+                      Taster Consent (Quick Setup)
+                    </h3>
+                  </button>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span
+                      className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                        allConsentChecked
+                          ? "bg-green-50 text-green-700"
+                          : "bg-gray-100 text-gray-500"
+                      }`}
+                    >
+                      {consentCount} of {consentTotal}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setConsentOpen((o) => !o)}
+                      aria-expanded={consentOpen}
+                      aria-controls="setup-consent-details"
+                      className="text-[11px] font-semibold text-[#e8174a] hover:text-[#c9143f] transition-colors whitespace-nowrap"
+                    >
+                      {consentOpen ? "Hide items" : "Show items"}
+                    </button>
+                  </div>
                 </div>
                 <p className="text-[11px] text-gray-500 mb-4">
-                  All items must be acknowledged before the session can begin.
+                  Supervised Quick Setup on this device; use Booth Handoff for full taster screening.
+                  {!consentOpen && !allConsentChecked
+                    ? ` ${consentCount} of ${consentTotal} items still needed.`
+                    : !consentOpen && allConsentChecked
+                      ? " All items acknowledged."
+                      : " All items below must be acknowledged before starting."}
                 </p>
 
                 <div className="mb-4 p-3 bg-[#fde8ed] rounded-lg border border-[#e8174a]/20">
@@ -530,19 +581,21 @@ export default function Setup() {
                   </ul>
                 </div>
 
-                <div className="space-y-1">
-                  {CONSENT_ITEMS.map((item) => (
-                    <ConsentRow
-                      key={item.key}
-                      checked={consent[item.key]}
-                      onChange={(checked) =>
-                        setConsent((p) => ({ ...p, [item.key]: checked }))
-                      }
-                      label={item.label}
-                      helper={item.helper}
-                    />
-                  ))}
-                </div>
+                {consentOpen ? (
+                  <div id="setup-consent-details" className="space-y-1">
+                    {CONSENT_ITEMS.map((item) => (
+                      <ConsentRow
+                        key={item.key}
+                        checked={consent[item.key]}
+                        onChange={(checked) =>
+                          setConsent((p) => ({ ...p, [item.key]: checked }))
+                        }
+                        label={item.label}
+                        helper={item.helper}
+                      />
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -556,7 +609,7 @@ export default function Setup() {
                     <InfoTip term="boothHandoff" align="left" />
                   </p>
                   <p className="text-[11px] text-gray-500 mb-3">
-                    Enter Taster account email to start the session and switch accounts automatically.
+                    Enter Taster master account email to start the session and switch accounts automatically.
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <input
@@ -593,7 +646,7 @@ export default function Setup() {
                   ) : null}
                   {!handoffEmail.trim() && !handoffPassword && (
                     <p className="text-[11px] text-gray-400 mt-2">
-                      Leave blank to use the Start Session by the admins below.
+                      Leave blank to use the Start Session by the admins/operators below.
                     </p>
                   )}
                 </div>
@@ -654,7 +707,7 @@ export default function Setup() {
                       Starting…
                     </span>
                   ) : (
-                    "Start the Session"
+                    "Start the Session (Quick Setup)"
                   )}
                 </button>
 

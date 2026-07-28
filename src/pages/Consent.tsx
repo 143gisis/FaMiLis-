@@ -1,8 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FAMILIS_CURRENT_SESSION_KEY, markSessionConsented, performLogout } from "../RequireAuth";
 import { apiFetch } from "../lib/api";
 import { BrandTopBar } from "../components/BrandTopBar";
+import {
+  buildDietaryRestrictionsFromDetails,
+  emptyDietaryDetails,
+  parseDietaryRestrictionsToDetails,
+  type DietaryEthicsKey,
+} from "../lib/dietaryRestrictions";
 
 const CONSENT_VERSION = "1.1";
 const DEVICE_ID_KEY = "familis.deviceId";
@@ -35,32 +41,39 @@ const ETHICS_ITEMS = [
   {
     key: "foodAllergies" as const,
     label: "Do you have any food allergies?",
+    dietaryLabel: "Allergies",
   },
   {
     key: "intolerances" as const,
     label: "Do you have any food intolerances or sensitivities?",
+    dietaryLabel: "Intolerances",
   },
   {
     key: "medicalDietary" as const,
     label: "Do you have any medical or dietary restrictions?",
+    dietaryLabel: "Medical",
   },
   {
     key: "religiousCultural" as const,
     label: "Do you have any religious or cultural dietary restrictions?",
+    dietaryLabel: "Religious/Cultural",
   },
   {
     key: "healthToday" as const,
     label: "Do you have any health condition today that may affect tasting?",
+    dietaryLabel: "Health today",
   },
   {
     key: "recentFoodMedication" as const,
     label: "Have you recently consumed food or medication that may affect taste perception?",
+    dietaryLabel: "Recent food/medication",
   },
 ];
 
 type ConsentState = Record<(typeof CONSENT_ITEMS)[number]["key"], boolean>;
-type EthicsKey = (typeof ETHICS_ITEMS)[number]["key"];
+type EthicsKey = DietaryEthicsKey;
 type EthicsState = Record<EthicsKey, boolean | null>;
+type EthicsDetailsState = Record<EthicsKey, string>;
 
 const DEFAULT_CONSENT: ConsentState = {
   facialRecording: false,
@@ -77,6 +90,10 @@ const DEFAULT_ETHICS: EthicsState = {
   healthToday: null,
   recentFoodMedication: null,
 };
+
+const DEFAULT_ETHICS_DETAILS: EthicsDetailsState = emptyDietaryDetails();
+
+export { buildDietaryRestrictionsFromDetails };
 
 type StoredSession = {
   id: number;
@@ -115,9 +132,10 @@ export default function Consent() {
   const [foodName, setFoodName] = useState<string | null>(null);
   const [consent, setConsent] = useState<ConsentState>(DEFAULT_CONSENT);
   const [ethics, setEthics] = useState<EthicsState>(DEFAULT_ETHICS);
-  const [ethicsDetails, setEthicsDetails] = useState("");
+  const [ethicsDetails, setEthicsDetails] = useState<EthicsDetailsState>(DEFAULT_ETHICS_DETAILS);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dietaryPrefillDoneRef = useRef(false);
 
   // If localStorage had no session, ask the server for the latest unsurveyed booth session.
   useEffect(() => {
@@ -167,6 +185,16 @@ export default function Consent() {
         const json = await res.json().catch(() => null);
         if (!cancelled && res.ok && json?.ok) {
           setFoodName(json.food?.name ?? null);
+          // Backfill participantId if missing from localStorage.
+          if (
+            (storedSession!.participantId == null || storedSession!.participantId === undefined) &&
+            json.session?.participantId != null
+          ) {
+            const pId = Number(json.session.participantId);
+            if (Number.isFinite(pId)) {
+              setStoredSession((prev) => (prev ? { ...prev, participantId: pId } : prev));
+            }
+          }
         }
       } catch {
         /* context is best-effort */
@@ -176,11 +204,76 @@ export default function Consent() {
     return () => { cancelled = true; };
   }, [storedSession, foodName]);
 
+  // Prefill ethics details from existing taster dietary_restrictions (once per load).
+  useEffect(() => {
+    if (!storedSession?.id) return;
+    if (dietaryPrefillDoneRef.current) return;
+
+    let cancelled = false;
+    async function prefillDietary() {
+      try {
+        let pId =
+          storedSession!.participantId != null && Number.isFinite(Number(storedSession!.participantId))
+            ? Number(storedSession!.participantId)
+            : null;
+
+        if (pId == null) {
+          const sessRes = await apiFetch(`/api/sessions/${storedSession!.id}`);
+          const sessJson = await sessRes.json().catch(() => null);
+          if (cancelled) return;
+          const fromSession = sessJson?.session?.participantId ?? sessJson?.participantId;
+          if (fromSession != null && Number.isFinite(Number(fromSession))) {
+            pId = Number(fromSession);
+            setStoredSession((prev) => (prev ? { ...prev, participantId: pId } : prev));
+          }
+        }
+
+        if (pId == null) {
+          dietaryPrefillDoneRef.current = true;
+          return;
+        }
+
+        const res = await apiFetch(`/api/participants/${pId}`);
+        const json = await res.json().catch(() => null);
+        if (cancelled || !res.ok || !json?.ok) {
+          dietaryPrefillDoneRef.current = true;
+          return;
+        }
+
+        const dietary =
+          typeof json.participant?.dietaryRestrictions === "string"
+            ? json.participant.dietaryRestrictions
+            : typeof json.dietaryRestrictions === "string"
+              ? json.dietaryRestrictions
+              : null;
+
+        dietaryPrefillDoneRef.current = true;
+        if (!dietary?.trim()) return;
+
+        const parsed = parseDietaryRestrictionsToDetails(dietary);
+        setEthicsDetails(parsed);
+        setEthics((prev) => {
+          const next = { ...prev };
+          for (const item of ETHICS_ITEMS) {
+            if (parsed[item.key].trim()) {
+              next[item.key] = true;
+            }
+          }
+          return next;
+        });
+      } catch {
+        /* prefill is best-effort; never block Continue */
+        dietaryPrefillDoneRef.current = true;
+      }
+    }
+    void prefillDietary();
+    return () => { cancelled = true; };
+  }, [storedSession?.id, storedSession?.participantId]);
+
   const consentCount = Object.values(consent).filter(Boolean).length;
   const consentTotal = CONSENT_ITEMS.length;
   const allConsentChecked = consentCount === consentTotal;
   const ethicsAnswered = ETHICS_ITEMS.every((item) => typeof ethics[item.key] === "boolean");
-  const anyEthicsYes = ETHICS_ITEMS.some((item) => ethics[item.key] === true);
   const canContinue = allConsentChecked && ethicsAnswered;
 
   const handleSubmit = async () => {
@@ -192,6 +285,15 @@ export default function Consent() {
         ETHICS_ITEMS.map((item) => [item.key, ethics[item.key] as boolean])
       ) as Record<EthicsKey, boolean>;
 
+      const ethicsDetailPayload = Object.fromEntries(
+        ETHICS_ITEMS.map((item) => {
+          const text = ethicsDetails[item.key].trim();
+          return [`${item.key}Detail`, text || null];
+        })
+      );
+
+      const dietaryRestrictions = buildDietaryRestrictionsFromDetails(ethicsDetails);
+
       const res = await apiFetch(`/api/consent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -201,8 +303,9 @@ export default function Consent() {
           deviceId: getDeviceId(),
           facialRecording: true,
           consentVersion: CONSENT_VERSION,
-          ethics: ethicsAnswers,
-          ethicsDetails: anyEthicsYes ? ethicsDetails.trim() || null : null,
+          ethics: { ...ethicsAnswers, ...ethicsDetailPayload },
+          ethicsDetails: dietaryRestrictions,
+          dietaryRestrictions,
         }),
       });
       const json = await res.json().catch(() => null);
@@ -326,7 +429,7 @@ export default function Consent() {
                 <div className="mt-6 pt-5 border-t border-gray-100">
                   <h3 className="text-sm text-gray-900 font-bold mb-1">Health &amp; dietary screening</h3>
                   <p className="text-[11px] text-gray-500 mb-4">
-                    Please answer all six questions. Optional details can be added if you answer Yes to any.
+                    Please answer all six questions. Optional details under each question are saved to the taster profile when provided.
                   </p>
 
                   <div className="space-y-3">
@@ -336,25 +439,14 @@ export default function Consent() {
                         label={item.label}
                         value={ethics[item.key]}
                         onChange={(value) => setEthics((p) => ({ ...p, [item.key]: value }))}
+                        detail={ethicsDetails[item.key]}
+                        onDetailChange={(text) =>
+                          setEthicsDetails((p) => ({ ...p, [item.key]: text }))
+                        }
+                        detailId={`ethics-detail-${item.key}`}
                       />
                     ))}
                   </div>
-
-                  {anyEthicsYes ? (
-                    <div className="mt-4">
-                      <label className="block text-sm text-gray-700 mb-1.5 font-semibold" htmlFor="ethics-details">
-                        Optional details
-                      </label>
-                      <textarea
-                        id="ethics-details"
-                        value={ethicsDetails}
-                        onChange={(e) => setEthicsDetails(e.target.value)}
-                        rows={3}
-                        placeholder="Briefly describe allergies, restrictions, or anything relevant to tasting today."
-                        className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white resize-y"
-                      />
-                    </div>
-                  ) : null}
                 </div>
 
                 <button
@@ -438,10 +530,16 @@ function EthicsRow({
   label,
   value,
   onChange,
+  detail,
+  onDetailChange,
+  detailId,
 }: {
   label: string;
   value: boolean | null;
   onChange: (value: boolean) => void;
+  detail: string;
+  onDetailChange: (value: string) => void;
+  detailId: string;
 }) {
   return (
     <div className="p-3 rounded-lg border border-gray-100 bg-gray-50/60">
@@ -469,6 +567,19 @@ function EthicsRow({
         >
           No
         </button>
+      </div>
+      <div className="mt-2.5">
+        <label className="block text-[11px] text-gray-500 mb-1 font-semibold" htmlFor={detailId}>
+          Optional details
+        </label>
+        <textarea
+          id={detailId}
+          value={detail}
+          onChange={(e) => onDetailChange(e.target.value)}
+          rows={2}
+          placeholder="Add any relevant details…"
+          className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30 bg-white resize-y"
+        />
       </div>
     </div>
   );
