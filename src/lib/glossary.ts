@@ -26,7 +26,8 @@ export type GlossaryTerm =
   | "compareSessions"
   | "sessionContinuation"
   | "ferVsSurvey"
-  | "demographicsHedonic";
+  | "demographicsHedonic"
+  | "spiderChart";
 
 export type GlossaryEntry = {
   title: string;
@@ -145,5 +146,9 @@ export const GLOSSARY: Record<GlossaryTerm, GlossaryEntry> = {
   demographicsHedonic: {
     title: "Demographics",
     body: "Average survey hedonic scores grouped by age and gender, not FER.",
+  },
+  spiderChart: {
+    title: "Spider chart",
+    body: "Summarizes overall taster responses for this food: mean survey ratings for color, flavor/aroma, salt/sweet, texture, and overall across valid sessions.",
   },
 };

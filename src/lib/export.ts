@@ -12,6 +12,11 @@ export type FoodExportSessionRow = {
   participantGender: string | null;
   frameCount: number;
   hasSurvey: boolean;
+  surveyOverall?: number | null;
+  invalidatedAt?: string | null;
+  validity?: "Valid" | "Invalidated";
+  meanFerHedonic?: number | null;
+  meanFerConfidence?: number | null;
 };
 
 export type FoodExportSurveyRow = {
@@ -27,10 +32,21 @@ export type FoodExportSurveyRow = {
   remarks: string | null;
 };
 
+export type FoodExportFerSummary = {
+  validSessionCount: number;
+  frameCount: number;
+  meanHedonic: number | null;
+  meanConfidence: number | null;
+  positiveCount: number;
+  neutralCount: number;
+  negativeCount: number;
+};
+
 export type FoodExportPayload = {
   food: { id: number; name: string; category: string };
   sessions: FoodExportSessionRow[];
   surveys: FoodExportSurveyRow[];
+  ferSummary?: FoodExportFerSummary | null;
 };
 
 export type SessionExportPayload = {
@@ -77,10 +93,54 @@ function todayStamp(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function formatScore(n: number | null | undefined): string | number {
+  if (n == null || !Number.isFinite(n)) return "";
+  return Number(n.toFixed(2));
+}
+
+function buildFoodMetaRows(payload: FoodExportPayload) {
+  const validSessions = payload.sessions.filter(
+    (s) => s.validity !== "Invalidated" && !s.invalidatedAt
+  );
+  const fer = payload.ferSummary;
+  // Surveys array is already valid-only (P1a), so this mean matches Dashboard.
+  const overallRatings = payload.surveys
+    .map((s) => s.finalOverallRating)
+    .filter((v) => v != null && Number.isFinite(v));
+  const surveyOverallMean =
+    overallRatings.length > 0
+      ? overallRatings.reduce((a, b) => a + b, 0) / overallRatings.length
+      : null;
+  return [
+    { Field: "Food ID", Value: payload.food.id },
+    { Field: "Food Name", Value: payload.food.name },
+    { Field: "Category", Value: payload.food.category },
+    { Field: "Export Date", Value: todayStamp() },
+    { Field: "Total Sessions (incl. invalidated)", Value: payload.sessions.length },
+    { Field: "Valid Sessions", Value: validSessions.length },
+    { Field: "Survey Responses (valid only)", Value: payload.surveys.length },
+    {
+      Field: "Survey Overall Mean (valid only, /9)",
+      Value: formatScore(surveyOverallMean),
+    },
+    {
+      Field: "FER Mean Hedonic (valid only, /9)",
+      Value: formatScore(fer?.meanHedonic),
+    },
+    {
+      Field: "FER Mean Confidence (valid only)",
+      Value:
+        fer?.meanConfidence == null ? "" : `${Math.round(fer.meanConfidence * 100)}%`,
+    },
+  ];
+}
+
 function buildFoodSessionRows(payload: FoodExportPayload) {
   return payload.sessions.map((s) => ({
     "Session ID": s.sessionId,
     Status: s.status,
+    Validity: s.validity ?? (s.invalidatedAt ? "Invalidated" : "Valid"),
+    "Invalidated At": s.invalidatedAt ?? "",
     "Start Time": s.startTime ?? "",
     "End Time": s.endTime ?? "",
     "Taster Label": s.participantLabel ?? "",
@@ -88,6 +148,10 @@ function buildFoodSessionRows(payload: FoodExportPayload) {
     "Taster Gender": s.participantGender ?? "",
     "Frame Count": s.frameCount,
     "Has Survey": s.hasSurvey ? "Yes" : "No",
+    "Survey Overall (/9)": formatScore(s.surveyOverall),
+    "Mean FER Hedonic (/9)": formatScore(s.meanFerHedonic),
+    "Mean FER Confidence":
+      s.meanFerConfidence == null ? "" : `${Math.round(s.meanFerConfidence * 100)}%`,
   }));
 }
 
@@ -106,10 +170,30 @@ function buildFoodSurveyRows(payload: FoodExportPayload) {
   }));
 }
 
+function buildFerSummaryRows(payload: FoodExportPayload) {
+  const fer = payload.ferSummary;
+  if (!fer) {
+    return [
+      { Field: "Note", Value: "No FER summary available for valid sessions." },
+    ];
+  }
+  return [
+    { Field: "Valid Sessions", Value: fer.validSessionCount },
+    { Field: "Frames Analyzed", Value: fer.frameCount },
+    { Field: "Mean FER Hedonic (/9)", Value: formatScore(fer.meanHedonic) },
+    {
+      Field: "Mean FER Confidence",
+      Value: fer.meanConfidence == null ? "" : `${Math.round(fer.meanConfidence * 100)}%`,
+    },
+    { Field: "Positive Frames (7-9)", Value: fer.positiveCount },
+    { Field: "Neutral Frames (5-6)", Value: fer.neutralCount },
+    { Field: "Negative Frames (1-4)", Value: fer.negativeCount },
+  ];
+}
+
 /**
- * Downloads a food product's sessions (+ survey rows for XLSX) as CSV or XLSX.
- * CSV is single-sheet (Sessions only) since the format has no sheet concept;
- * use XLSX for the full Sessions + Survey breakdown.
+ * Downloads a food product's sessions (+ survey / FER for XLSX) as CSV or XLSX.
+ * CSV is single-sheet (Sessions only); XLSX is the ready-made multi-sheet report.
  */
 export function downloadFoodExport(payload: FoodExportPayload, format: ExportFormat): void {
   const base = `${slugify(payload.food.name)}-export-${todayStamp()}`;
@@ -122,11 +206,12 @@ export function downloadFoodExport(payload: FoodExportPayload, format: ExportFor
     return;
   }
 
-  const surveyRows = buildFoodSurveyRows(payload);
   const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(buildFoodMetaRows(payload)), "Food meta");
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sessionRows), "Sessions");
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(surveyRows), "Survey");
-  XLSX.writeFile(wb, `${base}.xlsx`);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(buildFoodSurveyRows(payload)), "Survey");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(buildFerSummaryRows(payload)), "FER summary");
+  XLSX.writeFile(wb, `${base}-report.xlsx`);
 }
 
 function buildSessionRows(payload: SessionExportPayload) {
