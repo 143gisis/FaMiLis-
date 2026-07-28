@@ -19,7 +19,8 @@ import {
   StatsCategoryRibbon,
   type StatsCategory,
 } from "../components/analytics";
-import { RATING_LABELS, buildHedonicInterpretation, hedonicColor } from "../lib/ratingLabels";
+import { RATING_LABELS, buildDemographicsInterpretation, buildFerInterpretation, buildHedonicInterpretation, buildSurveyInterpretation, hedonicColor } from "../lib/ratingLabels";
+import { InfoTip } from "../components/InfoTip";
 import { ATTRIBUTE_COLORS, getDemoColor } from "../lib/attributeColors";
 import {
   Chart as ChartJS,
@@ -82,7 +83,8 @@ type SessionTrendPoint = {
 type Analytics = {
   meanConfidence: number;
   meanHedonic: number;
-  distribution: { label: string; value: number; color: string }[];
+  distribution: { label: string; value: number; color: string; count?: number }[];
+  reactionCounts?: { positive: number; neutral: number; negative: number };
   radar: { label: string; score: number }[];
   timeline: { label: string; score: number; sub: string }[];
   byAge: { label: string; score: number }[];
@@ -118,10 +120,11 @@ const EMPTY_ANALYTICS: Analytics = {
   meanConfidence: 0,
   meanHedonic: 0,
   distribution: [
-    { label: "Positive (7-9)", value: 0, color: "#22c55e" },
-    { label: "Neutral (5-6)", value: 0, color: "#eab308" },
-    { label: "Negative (1-4)", value: 0, color: "#ef4444" },
+    { label: "Positive (7-9)", value: 0, color: "#22c55e", count: 0 },
+    { label: "Neutral (5-6)", value: 0, color: "#eab308", count: 0 },
+    { label: "Negative (1-4)", value: 0, color: "#ef4444", count: 0 },
   ],
+  reactionCounts: { positive: 0, neutral: 0, negative: 0 },
   radar: [
     { label: "Overall", score: 0 },
     { label: "Color", score: 0 },
@@ -489,6 +492,75 @@ export default function Dashboard() {
 
   const surveyCountN = Number(stats.surveyCount ?? 0);
   const lowSample = surveyCountN < 5;
+
+  const ferInterpretation = useMemo(() => {
+    if (stats.frameLogCount <= 0) return null;
+    // Prefer explicit counts from the API; fall back to per-bucket counts, then
+    // derive from percentages so we never render "0, 0, and 0" beside a live pie.
+    const bucketCount = (prefix: string): number | null => {
+      const bucket = stats.distribution.find((d) => d.label.startsWith(prefix));
+      if (!bucket) return null;
+      if (typeof bucket.count === "number" && Number.isFinite(bucket.count)) return bucket.count;
+      return Math.round((bucket.value / 100) * stats.frameLogCount);
+    };
+    const rc = stats.reactionCounts;
+    const hasExplicit =
+      rc != null && rc.positive + rc.neutral + rc.negative > 0;
+    return buildFerInterpretation({
+      ferMean: stats.meanHedonic,
+      confidence: stats.meanConfidence,
+      positiveCount: hasExplicit ? rc!.positive : bucketCount("Positive") ?? 0,
+      neutralCount: hasExplicit ? rc!.neutral : bucketCount("Neutral") ?? 0,
+      negativeCount: hasExplicit ? rc!.negative : bucketCount("Negative") ?? 0,
+    });
+  }, [
+    stats.frameLogCount,
+    stats.meanHedonic,
+    stats.meanConfidence,
+    stats.distribution,
+    stats.reactionCounts,
+  ]);
+
+  const surveyInterpretation = useMemo(() => {
+    return buildSurveyInterpretation({
+      overallMean: stats.surveyCount > 0 ? stats.aspectStats.overall.mean : null,
+      surveyCount: stats.surveyCount,
+      aspectStats: stats.aspectStats,
+    });
+  }, [stats.surveyCount, stats.aspectStats]);
+
+  const demographicsInterpretation = useMemo(() => {
+    return buildDemographicsInterpretation({
+      byAge: stats.byAge,
+      byGender: stats.byGender,
+      surveyCount: stats.surveyCount,
+    });
+  }, [stats.byAge, stats.byGender, stats.surveyCount]);
+
+  const PAIR_DIFF_THRESHOLD = 1.5;
+  const PAIR_PREVIEW_COUNT = 5;
+  const [showAllPairs, setShowAllPairs] = useState(false);
+
+  // Latest-first FER vs survey pairs per valid session (sessionTrends is P1a-filtered).
+  const sessionPairs = useMemo(() => {
+    return stats.sessionTrends
+      .map((t) => {
+        const fer = t.meanFerHedonic;
+        const survey = t.overallRating;
+        const hasFer = fer != null && Number.isFinite(fer);
+        const hasSurvey = survey != null && Number.isFinite(survey);
+        const diff = hasFer && hasSurvey ? fer! - survey! : null;
+        return { ...t, hasFer, hasSurvey, diff };
+      })
+      .filter((t) => t.hasFer || t.hasSurvey)
+      .sort((a, b) => {
+        const ta = a.sessionDate ? new Date(a.sessionDate).getTime() : 0;
+        const tb = b.sessionDate ? new Date(b.sessionDate).getTime() : 0;
+        return tb - ta || b.sessionId - a.sessionId;
+      });
+  }, [stats.sessionTrends]);
+
+  const visiblePairs = showAllPairs ? sessionPairs : sessionPairs.slice(0, PAIR_PREVIEW_COUNT);
 
   // Exclude "Overall" from the radar chart — keep only the 4 attribute axes.
   const radarAttributes = useMemo(
@@ -865,6 +937,9 @@ export default function Dashboard() {
                               emptyLabel="No survey data yet"
                             />
                           </div>
+                          <p className="text-xs text-gray-500 -mt-2 mb-4">
+                            Averages across valid sessions only (invalidated excluded).
+                          </p>
 
                           <div className="mb-4">
                             <HedonicInterpretationCard
@@ -917,6 +992,82 @@ export default function Dashboard() {
                           </div>
 
                           <div>
+                            <div className="flex items-center justify-between gap-3">
+                              <SectionPill infoTerm="ferVsSurvey">Per-session pairs</SectionPill>
+                              {sessionPairs.length > PAIR_PREVIEW_COUNT ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setShowAllPairs((v) => !v)}
+                                  className="text-xs font-semibold text-[#e8174a] hover:text-[#c9143f] transition-colors whitespace-nowrap"
+                                >
+                                  {showAllPairs
+                                    ? "Show less"
+                                    : `Show all (${sessionPairs.length})`}
+                                </button>
+                              ) : null}
+                            </div>
+                            <p className="text-s text-gray-500 -mt-1 mb-4">
+                              FER hedonic vs survey overall for the latest valid sessions (invalidated excluded)
+                            </p>
+                            {sessionPairs.length === 0 ? (
+                              <p className="text-sm text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-4 py-6 text-center">
+                                No paired session data yet. Complete tasting sessions with frames and surveys to compare.
+                              </p>
+                            ) : (
+                              <div className="overflow-x-auto border border-gray-100 rounded-lg">
+                                <table className="min-w-[640px] w-full text-left">
+                                  <thead>
+                                    <tr className="text-xs text-gray-500 bg-gray-50">
+                                      <th className="px-3 py-2.5 font-semibold">Session</th>
+                                      <th className="px-3 py-2.5 font-semibold">Date</th>
+                                      <th className="px-3 py-2.5 font-semibold">FER hedonic</th>
+                                      <th className="px-3 py-2.5 font-semibold">Survey overall</th>
+                                      <th className="px-3 py-2.5 font-semibold">Δ (FER − Survey)</th>
+                                      <th className="px-3 py-2.5 font-semibold">Note</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {visiblePairs.map((row) => {
+                                      const note =
+                                        !row.hasFer
+                                          ? "Missing FER"
+                                          : !row.hasSurvey
+                                            ? "Missing survey"
+                                            : row.diff != null && Math.abs(row.diff) >= PAIR_DIFF_THRESHOLD
+                                              ? row.diff < 0
+                                                ? "FER lower"
+                                                : "FER higher"
+                                              : "Aligned";
+                                      return (
+                                        <tr key={row.sessionId} className="border-t border-gray-100 text-sm">
+                                          <td className="px-3 py-2.5 font-semibold text-gray-900">
+                                            #{row.sessionId}
+                                          </td>
+                                          <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">
+                                            {formatDate(row.sessionDate)}
+                                          </td>
+                                          <td className="px-3 py-2.5 tabular-nums text-gray-800">
+                                            {row.hasFer ? row.meanFerHedonic!.toFixed(1) : "—"}
+                                          </td>
+                                          <td className="px-3 py-2.5 tabular-nums text-gray-800">
+                                            {row.hasSurvey ? row.overallRating!.toFixed(1) : "—"}
+                                          </td>
+                                          <td className="px-3 py-2.5 tabular-nums text-gray-800">
+                                            {row.diff == null
+                                              ? "—"
+                                              : `${row.diff > 0 ? "+" : ""}${row.diff.toFixed(1)}`}
+                                          </td>
+                                          <td className="px-3 py-2.5 text-gray-600">{note}</td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
                             <SectionPill>9-Point Hedonic Scale Reference</SectionPill>
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 mt-3">
                               {Array.from({ length: 9 }, (_, i) => 9 - i).map((score) => {
@@ -957,6 +1108,15 @@ export default function Dashboard() {
                             />
                             <FerConfidenceCard meanConfidence={stats.meanConfidence} />
                           </div>
+                          {ferInterpretation ? (
+                            <div className="mt-4">
+                              <HedonicInterpretationCard text={ferInterpretation} />
+                            </div>
+                          ) : (
+                            <p className="text-xs text-gray-500 mt-4">
+                              No FER interpretation yet. Capture frames with hedonic and confidence scores to fill this summary.
+                            </p>
+                          )}
                         </div>
 
                         <div>
@@ -1009,6 +1169,9 @@ export default function Dashboard() {
                                       </span>
                                       <span className="text-sm text-gray-900 font-semibold tabular-nums">
                                         {d.value}%
+                                        {typeof d.count === "number" ? (
+                                          <span className="text-gray-500 font-normal"> ({d.count})</span>
+                                        ) : null}
                                       </span>
                                     </div>
                                     <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
@@ -1073,10 +1236,22 @@ export default function Dashboard() {
                           <p className="text-s text-gray-500 -mt-1 mb-4">
                             What consumers liked about the product? (from survey results)
                           </p>
+                          {surveyInterpretation ? (
+                            <div className="mb-4">
+                              <HedonicInterpretationCard text={surveyInterpretation} />
+                            </div>
+                          ) : (
+                            <p className="text-xs text-gray-500 mb-4">
+                              No survey interpretation yet. Collect taster survey responses to fill this summary.
+                            </p>
+                          )}
                           {/* Figma-inspired: radar left; hero + attribute bars stacked right */}
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
                             <div className="bg-gray-50 rounded-lg border border-gray-100 p-4 h-full flex flex-col">
-                              <p className="text-s text-gray-600 font-semibold mb-2 shrink-0">Spider chart</p>
+                              <p className="text-s text-gray-600 font-semibold mb-2 shrink-0 inline-flex items-center gap-1.5">
+                                Spider chart
+                                <InfoTip term="spiderChart" align="left" />
+                              </p>
                               <div className="relative flex-1 min-h-[280px] md:min-h-[420px] w-full">
                                 <div className="absolute inset-0">
                                   <Radar data={radarChartData as any} options={radarChartOptions as any} />
@@ -1115,8 +1290,17 @@ export default function Dashboard() {
                         <div>
                           <SectionPill infoTerm="demographicsHedonic">Demographics</SectionPill>
                           <p className="text-s text-gray-500 -mt-1 mb-4">
-                            Consumer profile and survey-based hedonic scores
+                            Consumer profile with hedonic scores by age and gender.
                           </p>
+                          {demographicsInterpretation ? (
+                            <div className="mb-4">
+                              <HedonicInterpretationCard text={demographicsInterpretation} />
+                            </div>
+                          ) : (
+                            <p className="text-xs text-gray-500 mb-4">
+                              No demographics interpretation yet. Collect responses with age and gender on the taster profile to fill this summary.
+                            </p>
+                          )}
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
                               <p className="text-s text-gray-700 font-semibold mb-3">

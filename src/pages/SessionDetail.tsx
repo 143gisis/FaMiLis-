@@ -79,6 +79,7 @@ type SurveyResults = {
 type Participant = {
   id: number;
   testerLabel: string | null;
+  dietaryRestrictions?: string | null;
 };
 
 type SessionDetailPayload = {
@@ -612,7 +613,7 @@ export default function SessionDetail() {
                     onClick={() => setDeleteOpen(true)}
                     className="text-sm font-semibold border border-red-200 text-red-700 hover:bg-red-50 rounded-md px-3 py-2 transition-colors"
                   >
-                    Delete Session
+                    Delete
                   </button>
                 </div>
               </div>
@@ -855,6 +856,7 @@ export default function SessionDetail() {
                   <SurveyResultsPanel
                     surveyResults={content.surveyResults}
                     sessionId={content.session.id}
+                    dietaryRestrictions={content.participant?.dietaryRestrictions ?? null}
                   />
                 )}
               </section>
@@ -1032,9 +1034,11 @@ function buildInsightSummary(ratings: (number | null)[]): string {
 function SurveyResultsPanel({
   surveyResults,
   sessionId,
+  dietaryRestrictions,
 }: {
   surveyResults: SurveyResults | null;
   sessionId: number;
+  dietaryRestrictions?: string | null;
 }) {
   if (!surveyResults) {
     return (
@@ -1076,6 +1080,7 @@ function SurveyResultsPanel({
 
   const overallVal = sr.finalOverallRating ?? null;
   const summaryText = buildInsightSummary(attrRatings);
+  const dietaryText = dietaryRestrictions?.trim() || null;
 
   return (
     <div className="space-y-6">
@@ -1086,6 +1091,12 @@ function SurveyResultsPanel({
           <ProfileCard label="Taster ID" value={`P-${sessionId}`} />
           <ProfileCard label="Age" value={sr.age != null ? String(sr.age) : "—"} />
           <ProfileCard label="Gender" value={gender ?? "—"} />
+        </div>
+        <div className="mt-3 bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+          <h3 className="text-sm font-bold text-gray-900 mb-1">Dietary restrictions</h3>
+          <p className="text-sm text-gray-700 whitespace-pre-wrap">
+            {dietaryText ?? "None recorded."}
+          </p>
         </div>
       </div>
 
