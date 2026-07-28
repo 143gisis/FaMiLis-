@@ -6,6 +6,7 @@ export type ParticipantListItem = {
   dietaryRestrictions?: string | null;
   createdAt: string | null;
   sessionCount?: number;
+  lastSessionAt?: string | null;
   lastFoodName?: string | null;
   foodsTastedCount?: number;
 };
@@ -58,6 +59,9 @@ export function ParticipantRow({
       </td>
       <td className="px-4 py-2.5 text-sm text-gray-600 whitespace-nowrap w-20">
         {sessionCount}
+      </td>
+      <td className="px-4 py-2.5 text-sm text-gray-600 whitespace-nowrap w-28">
+        {participant.lastSessionAt ? formatDate(participant.lastSessionAt) : "—"}
       </td>
       <td className="px-4 py-2.5 text-sm text-gray-600 whitespace-nowrap max-w-[10rem]">
         <span className="block truncate" title={lastFoodName ?? undefined}>

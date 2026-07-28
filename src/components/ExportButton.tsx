@@ -15,6 +15,7 @@ type ExportButtonProps =
 /**
  * Export dropdown (CSV / XLSX) for admin/staff. Fetches the flat export JSON
  * for the given food or session and builds the spreadsheet client-side.
+ * Food XLSX is the ready-made multi-sheet report; CSV is a quick Sessions dump.
  * Callers are responsible for role-gating (testers must not see this).
  */
 export function ExportButton(props: ExportButtonProps) {
@@ -66,6 +67,8 @@ export function ExportButton(props: ExportButtonProps) {
     }
   };
 
+  const isFood = props.kind === "food";
+
   return (
     <div ref={wrapperRef} className="relative inline-block">
       <button
@@ -75,23 +78,23 @@ export function ExportButton(props: ExportButtonProps) {
         aria-expanded={open}
         className="inline-flex items-center text-sm font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50 rounded-md px-3 py-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
-        {loading ? "Exporting…" : "Export"}
+        {loading ? "Exporting…" : isFood ? "Download report" : "Export"}
       </button>
       {open ? (
-        <div className="absolute right-0 mt-1 w-32 bg-white border border-gray-200 rounded-md shadow-lg z-20 overflow-hidden">
-          <button
-            type="button"
-            onClick={() => void runExport("csv")}
-            className="w-full text-left text-xs font-semibold px-3 py-2 text-gray-700 hover:bg-gray-50"
-          >
-            CSV
-          </button>
+        <div className="absolute right-0 mt-1 w-44 bg-white border border-gray-200 rounded-md shadow-lg z-20 overflow-hidden">
           <button
             type="button"
             onClick={() => void runExport("xlsx")}
             className="w-full text-left text-xs font-semibold px-3 py-2 text-gray-700 hover:bg-gray-50"
           >
-            XLSX
+            {isFood ? "XLSX" : "XLSX"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void runExport("csv")}
+            className="w-full text-left text-xs font-semibold px-3 py-2 text-gray-700 hover:bg-gray-50"
+          >
+            {isFood ? "CSV" : "CSV"}
           </button>
         </div>
       ) : null}
