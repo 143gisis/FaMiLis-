@@ -1102,6 +1102,7 @@ async function start() {
       consentVersion,
       ethics,
       ethicsDetails,
+      dietaryRestrictions,
     } = req.body ?? {};
 
     const device = typeof deviceId === "string" ? deviceId.trim() : "";
@@ -1114,7 +1115,7 @@ async function start() {
 
     const sId =
       sessionId == null || sessionId === "" ? null : Number.parseInt(String(sessionId), 10);
-    const pId =
+    let pId =
       participantId == null || participantId === ""
         ? null
         : Number.parseInt(String(participantId), 10);
@@ -1130,6 +1131,14 @@ async function start() {
       "healthToday",
       "recentFoodMedication",
     ];
+    const ETHICS_DETAIL_LABELS = {
+      foodAllergies: "Allergies",
+      intolerances: "Intolerances",
+      medicalDietary: "Medical",
+      religiousCultural: "Religious/Cultural",
+      healthToday: "Health today",
+      recentFoodMedication: "Recent food/medication",
+    };
     const ethicsSource =
       ethics && typeof ethics === "object" && !Array.isArray(ethics)
         ? ethics
@@ -1154,15 +1163,45 @@ async function start() {
         });
       }
       ethicsPayload[key] = ethicsSource[key];
+      // Optional per-section detail keys for audit (e.g. foodAllergiesDetail).
+      const detailKey = `${key}Detail`;
+      if (Object.prototype.hasOwnProperty.call(ethicsSource, detailKey)) {
+        const rawDetail = ethicsSource[detailKey];
+        const detailText =
+          rawDetail == null || rawDetail === ""
+            ? null
+            : typeof rawDetail === "string"
+              ? rawDetail.trim() || null
+              : String(rawDetail).trim() || null;
+        if (detailText) ethicsPayload[detailKey] = detailText;
+      }
     }
 
-    const detailsRaw = ethicsDetails;
-    const ethicsDetailsValue =
-      detailsRaw == null || detailsRaw === ""
-        ? null
-        : typeof detailsRaw === "string"
-          ? detailsRaw.trim() || null
-          : String(detailsRaw).trim() || null;
+    // Prefer explicit dietaryRestrictions; else ethicsDetails string; else build from per-key details.
+    let dietaryValue = null;
+    const dietaryRaw =
+      dietaryRestrictions != null && dietaryRestrictions !== ""
+        ? dietaryRestrictions
+        : ethicsDetails;
+    if (dietaryRaw != null && dietaryRaw !== "") {
+      dietaryValue =
+        typeof dietaryRaw === "string"
+          ? dietaryRaw.trim() || null
+          : String(dietaryRaw).trim() || null;
+    }
+    if (!dietaryValue) {
+      const parts = [];
+      for (const key of ETHICS_KEYS) {
+        const detail = ethicsPayload[`${key}Detail`];
+        if (typeof detail === "string" && detail.trim()) {
+          parts.push(`${ETHICS_DETAIL_LABELS[key]}: ${detail.trim()}`);
+        }
+      }
+      dietaryValue = parts.length > 0 ? parts.join("; ") : null;
+    }
+
+    // Consent row ethics_details stores the concatenated dietary string (null if empty).
+    const ethicsDetailsValue = dietaryValue;
 
     // Consent 1.1 includes ethics screening; bump default when ethics is present.
     const version =
@@ -1173,11 +1212,15 @@ async function start() {
     try {
       if (sId != null) {
         const [[sessionRow]] = await pool.query(
-          `SELECT session_id FROM sessions WHERE session_id = ? LIMIT 1`,
+          `SELECT session_id, participant_id FROM sessions WHERE session_id = ? LIMIT 1`,
           [sId]
         );
         if (!sessionRow) {
           return res.status(404).json({ ok: false, error: "Session not found." });
+        }
+        // Current booth flow always links a taster before consent; fall back to session.participant_id.
+        if (pId == null && sessionRow.participant_id != null) {
+          pId = Number(sessionRow.participant_id);
         }
       }
 
@@ -1202,6 +1245,15 @@ async function start() {
           ipAddress,
         ]
       );
+
+      // Overwrite/create dietary_restrictions only when any detail was provided; leave untouched if all empty.
+      // Current flow always has a participant linked before consent (Setup → booth handoff).
+      if (pId != null && dietaryValue) {
+        await pool.query(
+          `UPDATE participants SET dietary_restrictions = ? WHERE participant_id = ?`,
+          [dietaryValue, pId]
+        );
+      }
 
       // Reset session clock so elapsed time excludes the consent step.
       let sessionStartTime = null;
@@ -1568,11 +1620,14 @@ async function start() {
       );
 
       const totalCount = Number(distRow?.total_count ?? 0);
+      const positiveCount = Number(distRow?.positive_count ?? 0);
+      const neutralCount = Number(distRow?.neutral_count ?? 0);
+      const negativeCount = Number(distRow?.negative_count ?? 0);
       const pct = (n) => (totalCount === 0 ? 0 : Math.round((Number(n ?? 0) / totalCount) * 100));
       const distribution = [
-        { label: "Positive (7-9)", value: pct(distRow?.positive_count), color: "#22c55e" },
-        { label: "Neutral (5-6)", value: pct(distRow?.neutral_count), color: "#eab308" },
-        { label: "Negative (1-4)", value: pct(distRow?.negative_count), color: "#ef4444" },
+        { label: "Positive (7-9)", value: pct(positiveCount), color: "#22c55e", count: positiveCount },
+        { label: "Neutral (5-6)", value: pct(neutralCount), color: "#eab308", count: neutralCount },
+        { label: "Negative (1-4)", value: pct(negativeCount), color: "#ef4444", count: negativeCount },
       ];
       // Fix rounding drift to keep a stable 100% in the UI.
       const drift = 100 - distribution.reduce((a, b) => a + b.value, 0);
@@ -1789,6 +1844,11 @@ async function start() {
           // hedonic_score is normalized 0..1 in frame_logs; map to 1..9 for UI consistency.
           meanHedonic: hedonicRow?.mean_hedonic == null ? 0 : Number(hedonicRow.mean_hedonic) * 8 + 1,
           distribution,
+          reactionCounts: {
+            positive: positiveCount,
+            neutral: neutralCount,
+            negative: negativeCount,
+          },
           radar,
           timeline,
           byAge,
@@ -1807,7 +1867,8 @@ async function start() {
     }
   });
 
-  // Phase 2: flat export rows for a food product (client builds CSV/XLSX from this JSON).
+  // Phase 2 / N+2: flat export rows for a food product (client builds CSV/XLSX from this JSON).
+  // Sessions sheet includes invalidated rows with validity; Survey + FER summary use valid only (P1a).
   app.get("/api/foods/:foodId/export", requireRole("admin", "staff"), async (req, res) => {
     const foodId = Number.parseInt(req.params.foodId, 10);
     if (!Number.isFinite(foodId)) {
@@ -1830,10 +1891,13 @@ async function start() {
           s.status,
           s.start_time,
           s.end_time,
+          s.invalidated_at,
           p.tester_label,
           p.age,
           p.gender,
           (SELECT COUNT(*) FROM frame_logs fl WHERE fl.session_id = s.session_id) AS frame_count,
+          fer.mean_hedonic,
+          fer.mean_confidence,
           sr.color_rating,
           sr.flavor_aroma_rating,
           sr.salt_sweet_rating,
@@ -1843,26 +1907,48 @@ async function start() {
         FROM sessions s
         LEFT JOIN participants p ON p.participant_id = s.participant_id
         LEFT JOIN survey_results sr ON sr.session_id = s.session_id
-        WHERE s.food_id = ? AND s.invalidated_at IS NULL
+        LEFT JOIN (
+          -- AVG ignores NULLs, so no WHERE filter: a session whose frames only
+          -- carry confidence still gets its confidence mean (hedonic stays null).
+          SELECT
+            session_id,
+            AVG(hedonic_score) AS mean_hedonic,
+            AVG(confidence_score) AS mean_confidence
+          FROM frame_logs
+          GROUP BY session_id
+        ) fer ON fer.session_id = s.session_id
+        WHERE s.food_id = ?
         ORDER BY s.start_time ASC
       `,
         [foodId]
       );
 
-      const sessions = rows.map((r) => ({
-        sessionId: Number(r.session_id),
-        status: r.status,
-        startTime: toIsoOrNull(r.start_time),
-        endTime: toIsoOrNull(r.end_time),
-        participantLabel: r.tester_label == null ? null : String(r.tester_label),
-        participantAge: r.age == null ? null : Number(r.age),
-        participantGender: r.gender == null ? null : String(r.gender),
-        frameCount: Number(r.frame_count ?? 0),
-        hasSurvey: r.final_overall_rating != null,
-      }));
+      const sessions = rows.map((r) => {
+        const invalidatedAt = toIsoOrNull(r.invalidated_at);
+        return {
+          sessionId: Number(r.session_id),
+          status: r.status,
+          startTime: toIsoOrNull(r.start_time),
+          endTime: toIsoOrNull(r.end_time),
+          participantLabel: r.tester_label == null ? null : String(r.tester_label),
+          participantAge: r.age == null ? null : Number(r.age),
+          participantGender: r.gender == null ? null : String(r.gender),
+          frameCount: Number(r.frame_count ?? 0),
+          hasSurvey: r.final_overall_rating != null,
+          surveyOverall:
+            r.final_overall_rating == null ? null : Number(r.final_overall_rating),
+          invalidatedAt,
+          validity: invalidatedAt ? "Invalidated" : "Valid",
+          meanFerHedonic:
+            r.mean_hedonic == null ? null : Number(r.mean_hedonic) * 8 + 1,
+          meanFerConfidence:
+            r.mean_confidence == null ? null : Number(r.mean_confidence),
+        };
+      });
 
+      // Survey sheet: valid sessions only (P1a).
       const surveys = rows
-        .filter((r) => r.final_overall_rating != null)
+        .filter((r) => r.invalidated_at == null && r.final_overall_rating != null)
         .map((r) => ({
           sessionId: Number(r.session_id),
           participantLabel: r.tester_label == null ? null : String(r.tester_label),
@@ -1876,11 +1962,47 @@ async function start() {
           remarks: r.remarks == null ? null : String(r.remarks),
         }));
 
+      // FER summary aggregates: valid sessions only. AVG skips NULLs, so
+      // hedonic and confidence means each use every frame that carries that score.
+      const [[ferAgg]] = await pool.query(
+        `
+        SELECT
+          COUNT(DISTINCT s.session_id) AS valid_session_count,
+          COUNT(CASE WHEN fl.hedonic_score IS NOT NULL THEN fl.frame_log_id END) AS frame_count,
+          AVG(fl.hedonic_score) AS mean_hedonic,
+          AVG(fl.confidence_score) AS mean_confidence,
+          SUM(CASE WHEN (fl.hedonic_score * 8 + 1) >= 7 THEN 1 ELSE 0 END) AS positive_count,
+          SUM(CASE WHEN (fl.hedonic_score * 8 + 1) >= 5 AND (fl.hedonic_score * 8 + 1) < 7 THEN 1 ELSE 0 END) AS neutral_count,
+          SUM(CASE WHEN (fl.hedonic_score * 8 + 1) < 5 THEN 1 ELSE 0 END) AS negative_count
+        FROM sessions s
+        LEFT JOIN frame_logs fl ON fl.session_id = s.session_id
+        WHERE s.food_id = ? AND s.invalidated_at IS NULL
+      `,
+        [foodId]
+      );
+
+      const ferSummary = {
+        validSessionCount: Number(ferAgg?.valid_session_count ?? 0),
+        frameCount: Number(ferAgg?.frame_count ?? 0),
+        meanHedonic:
+          ferAgg?.mean_hedonic == null ? null : Number(ferAgg.mean_hedonic) * 8 + 1,
+        meanConfidence:
+          ferAgg?.mean_confidence == null ? null : Number(ferAgg.mean_confidence),
+        positiveCount: Number(ferAgg?.positive_count ?? 0),
+        neutralCount: Number(ferAgg?.neutral_count ?? 0),
+        negativeCount: Number(ferAgg?.negative_count ?? 0),
+      };
+
       return res.json({
         ok: true,
-        food: { id: Number(foodRow.food_id), name: String(foodRow.name), category: String(foodRow.category ?? "") },
+        food: {
+          id: Number(foodRow.food_id),
+          name: String(foodRow.name),
+          category: String(foodRow.category ?? ""),
+        },
         sessions,
         surveys,
+        ferSummary,
       });
     } catch (err) {
       console.error("GET /api/foods/:foodId/export error:", err);
@@ -2326,7 +2448,7 @@ async function start() {
 
       const [[participantRow]] = sessionRow.participant_id
         ? await pool.query(
-            `SELECT participant_id, tester_label FROM participants WHERE participant_id = ? LIMIT 1`,
+            `SELECT participant_id, tester_label, dietary_restrictions FROM participants WHERE participant_id = ? LIMIT 1`,
             [sessionRow.participant_id]
           )
         : [[null]];
@@ -2376,6 +2498,11 @@ async function start() {
           ? {
               id: Number(participantRow.participant_id),
               testerLabel: participantRow.tester_label == null ? null : String(participantRow.tester_label),
+              dietaryRestrictions:
+                participantRow.dietary_restrictions == null ||
+                participantRow.dietary_restrictions === ""
+                  ? null
+                  : String(participantRow.dietary_restrictions),
             }
           : null,
         metrics: {
