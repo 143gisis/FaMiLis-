@@ -351,7 +351,7 @@ export default function Survey() {
                 </div>
               ) : null}
 
-              <section className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+              <section className="bg-white border border-gray-200 rounded-lg overflow-visible">
                 <div className="p-6 flex justify-center">
                   <div className="border border-red-500 px-6 py-3 text-center w-full max-w-[520px]">
                     <p className="text-base font-extrabold text-gray-900">{productTitle}</p>
@@ -359,27 +359,35 @@ export default function Survey() {
                 </div>
 
                 <div className="divide-y divide-gray-200">
-                  <RatingRow label="COLOR" value={ratings.color} onChange={handleSelect("color")} />
+                  <RatingRow
+                    label="COLOR"
+                    value={ratings.color}
+                    onChange={handleSelect("color")}
+                    infoTerm="surveyColor"
+                  />
                   <RatingRow
                     label="FLAVOR / AROMA"
                     value={ratings.flavorAroma}
                     onChange={handleSelect("flavorAroma")}
+                    infoTerm="surveyFlavorAroma"
                   />
                   <RatingRow
                     label="SALTINESS / SWEETNESS"
                     value={ratings.saltSweet}
                     onChange={handleSelect("saltSweet")}
+                    infoTerm="surveySaltSweet"
                   />
                   <RatingRow
                     label="TEXTURE / VISCOSITY"
                     value={ratings.texture}
                     onChange={handleSelect("texture")}
+                    infoTerm="surveyTexture"
                   />
                   <RatingRow
                     label="OVERALL PROFILE"
                     value={ratings.overall}
                     onChange={handleSelect("overall")}
-                    infoTerm="hedonicScore"
+                    infoTerm="overallProfile"
                   />
                 </div>
 
@@ -447,7 +455,7 @@ function RatingRow({
       <div className="flex items-center justify-between gap-4">
         <p className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
           <span className="uppercase tracking-wide">{label}</span>
-          {infoTerm ? <InfoTip term={infoTerm} /> : null}
+          {infoTerm ? <InfoTip term={infoTerm} align="left" /> : null}
         </p>
         <div className="flex flex-wrap gap-3 justify-end">
           {RATING_OPTIONS.map((rating) => {

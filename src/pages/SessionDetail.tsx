@@ -1054,11 +1054,16 @@ function SurveyResultsPanel({
     : null;
 
   // Sensory attributes
-  const attributes: { label: string; key: keyof SurveyResults; color: string }[] = [
-    { label: "Color",         key: "colorRating",       color: ATTRIBUTE_COLORS["Color"] },
-    { label: "Flavor/Aroma",  key: "flavorAromaRating", color: ATTRIBUTE_COLORS["Flavor/Aroma"] },
-    { label: "Salt/Sweet",    key: "saltSweetRating",   color: ATTRIBUTE_COLORS["Salt/Sweet"] },
-    { label: "Texture",       key: "textureRating",     color: ATTRIBUTE_COLORS["Texture"] },
+  const attributes: {
+    label: string;
+    key: keyof SurveyResults;
+    color: string;
+    infoTerm: "surveyColor" | "surveyFlavorAroma" | "surveySaltSweet" | "surveyTexture";
+  }[] = [
+    { label: "Color",         key: "colorRating",       color: ATTRIBUTE_COLORS["Color"],         infoTerm: "surveyColor" },
+    { label: "Flavor/Aroma",  key: "flavorAromaRating", color: ATTRIBUTE_COLORS["Flavor/Aroma"],  infoTerm: "surveyFlavorAroma" },
+    { label: "Salt/Sweet",    key: "saltSweetRating",   color: ATTRIBUTE_COLORS["Salt/Sweet"],    infoTerm: "surveySaltSweet" },
+    { label: "Texture",       key: "textureRating",     color: ATTRIBUTE_COLORS["Texture"],       infoTerm: "surveyTexture" },
   ];
 
   // Key Insights
@@ -1114,10 +1119,15 @@ function SurveyResultsPanel({
                 label={a.label}
                 rating={sr[a.key] as number | null}
                 color={a.color}
+                infoTerm={a.infoTerm}
               />
             ))}
           </div>
-          <HeroHedonicCard score={overallVal} label="Overall Survey Hedonic Rating" />
+          <HeroHedonicCard
+            score={overallVal}
+            label="Overall Survey Hedonic Rating"
+            infoTerm="overallProfile"
+          />
         </div>
       </div>
 
@@ -1135,7 +1145,7 @@ function SurveyResultsPanel({
             variant="metric"
             title="Overall Acceptance"
             value={overallVal != null ? `${Math.round(overallVal)}/9` : "—"}
-            infoTerm="overallAcceptance"
+            infoTerm="overallProfile"
           />
           <InsightCard variant="narrative" text={summaryText} />
         </div>

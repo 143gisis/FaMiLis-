@@ -21,6 +21,7 @@ import {
 } from "../components/analytics";
 import { RATING_LABELS, buildDemographicsInterpretation, buildFerInterpretation, buildHedonicInterpretation, buildSurveyInterpretation, hedonicColor } from "../lib/ratingLabels";
 import { InfoTip } from "../components/InfoTip";
+import type { GlossaryTerm } from "../lib/glossary";
 import { ATTRIBUTE_COLORS, getDemoColor } from "../lib/attributeColors";
 import {
   Chart as ChartJS,
@@ -114,6 +115,15 @@ const ASPECT_KEY_BY_LABEL: Record<string, keyof AspectStats> = {
   "Salt/Sweet": "saltSweet",
   Texture: "texture",
   Overall: "overall",
+};
+
+/** Per-attribute InfoTip terms for survey sensory bars. */
+const ASPECT_INFO_BY_LABEL: Record<string, GlossaryTerm> = {
+  Color: "surveyColor",
+  "Flavor/Aroma": "surveyFlavorAroma",
+  "Salt/Sweet": "surveySaltSweet",
+  Texture: "surveyTexture",
+  Overall: "overallProfile",
 };
 
 const EMPTY_ANALYTICS: Analytics = {
@@ -1275,6 +1285,7 @@ export default function Dashboard() {
                                       n={aspect?.n}
                                       stdDev={aspect?.stdDev}
                                       showStatsTips={i === 0}
+                                      infoTerm={ASPECT_INFO_BY_LABEL[r.label]}
                                     />
                                   );
                                 })}
@@ -1288,9 +1299,9 @@ export default function Dashboard() {
                     {statsCategory === "demographics" ? (
                       <LowSampleOverlay active={lowSample} sampleSize={surveyCountN}>
                         <div>
-                          <SectionPill infoTerm="demographicsHedonic">Demographics</SectionPill>
+                          <SectionPill infoTerm="demographicsHedonic">Survey Demographics</SectionPill>
                           <p className="text-s text-gray-500 -mt-1 mb-4">
-                            Consumer profile with hedonic scores by age and gender.
+                            Consumer profile with hedonic scores from survey responses by age and gender
                           </p>
                           {demographicsInterpretation ? (
                             <div className="mb-4">
