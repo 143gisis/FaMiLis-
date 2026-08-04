@@ -98,6 +98,20 @@ function formatScore(n: number | null | undefined): string | number {
   return Number(n.toFixed(2));
 }
 
+/** Soft sheet protect with no password. Unprotect Sheet works without a prompt. CSV cannot be protected. */
+function softProtectSheet(ws: XLSX.WorkSheet): XLSX.WorkSheet {
+  ws["!protect"] = {};
+  return ws;
+}
+
+function appendProtectedSheet(
+  wb: XLSX.WorkBook,
+  ws: XLSX.WorkSheet,
+  name: string
+): void {
+  XLSX.utils.book_append_sheet(wb, softProtectSheet(ws), name);
+}
+
 function buildFoodMetaRows(payload: FoodExportPayload) {
   const validSessions = payload.sessions.filter(
     (s) => s.validity !== "Invalidated" && !s.invalidatedAt
@@ -193,13 +207,15 @@ function buildFerSummaryRows(payload: FoodExportPayload) {
 
 /**
  * Downloads a food product's sessions (+ survey / FER for XLSX) as CSV or XLSX.
- * CSV is single-sheet (Sessions only); XLSX is the ready-made multi-sheet report.
+ * CSV is single-sheet (Sessions only) and cannot be sheet-protected.
+ * XLSX is the ready-made multi-sheet report with soft no-password sheet protect.
  */
 export function downloadFoodExport(payload: FoodExportPayload, format: ExportFormat): void {
   const base = `${slugify(payload.food.name)}-export-${todayStamp()}`;
   const sessionRows = buildFoodSessionRows(payload);
 
   if (format === "csv") {
+    // CSV has no sheet-protection model; export content unchanged.
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sessionRows), "Sessions");
     XLSX.writeFile(wb, `${base}.csv`, { bookType: "csv" });
@@ -207,10 +223,10 @@ export function downloadFoodExport(payload: FoodExportPayload, format: ExportFor
   }
 
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(buildFoodMetaRows(payload)), "Food meta");
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sessionRows), "Sessions");
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(buildFoodSurveyRows(payload)), "Survey");
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(buildFerSummaryRows(payload)), "FER summary");
+  appendProtectedSheet(wb, XLSX.utils.json_to_sheet(buildFoodMetaRows(payload)), "Food summary");
+  appendProtectedSheet(wb, XLSX.utils.json_to_sheet(buildFerSummaryRows(payload)), "FER frame analysis");
+  appendProtectedSheet(wb, XLSX.utils.json_to_sheet(sessionRows), "Sessions");
+  appendProtectedSheet(wb, XLSX.utils.json_to_sheet(buildFoodSurveyRows(payload)), "Survey");
   XLSX.writeFile(wb, `${base}-report.xlsx`);
 }
 
@@ -251,10 +267,12 @@ export function downloadSessionExport(payload: SessionExportPayload, format: Exp
   const base = `session-${payload.session.id}-export-${todayStamp()}`;
   const rows = buildSessionRows(payload);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Session");
   if (format === "csv") {
+    // CSV has no sheet-protection model; export content unchanged.
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Session");
     XLSX.writeFile(wb, `${base}.csv`, { bookType: "csv" });
   } else {
+    appendProtectedSheet(wb, XLSX.utils.json_to_sheet(rows), "Session");
     XLSX.writeFile(wb, `${base}.xlsx`);
   }
 }

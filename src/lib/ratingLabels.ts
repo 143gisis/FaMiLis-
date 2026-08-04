@@ -132,7 +132,7 @@ export function buildHedonicInterpretation(input: HedonicInterpretationInput): s
   const confidence = input.confidence;
   if (fer != null && Number.isFinite(fer)) {
     parts.push(
-      `while the <strong>FER system</strong> predicts the customer's emotional reaction to this product as <strong>${formatHedonicPhrase(fer)}</strong>` +
+      `while the <strong>FER hedonic prediction model</strong> tells the customer's emotional reaction to this product as <strong>${formatHedonicPhrase(fer)}</strong>` +
         (confidence != null && Number.isFinite(confidence)
           ? ` with <strong>${Math.round(confidence * 100)}% confidence</strong>`
           : "") +
@@ -180,7 +180,7 @@ export function buildFerInterpretation(input: FerInterpretationInput): string | 
   const neg = Math.max(0, Math.round(input.negativeCount));
 
   return (
-    `The <strong>hedonic score</strong> computed by the FER system is <strong>${formatHedonicPhrase(fer)}</strong> ` +
+    `The <strong>hedonic score</strong> computed by the <strong>FER hedonic prediction model</strong> is <strong>${formatHedonicPhrase(fer)}</strong> ` +
     `with a <strong>confidence score</strong> of <strong>${confPct}</strong>. ` +
     `The <strong>reaction</strong> is distributed across frames as follows: <strong>${pos}</strong> positive, ` +
     `<strong>${neu}</strong> neutral, and <strong>${neg}</strong> negative.`
@@ -278,7 +278,7 @@ export function buildDemographicsInterpretation(
 
   const tasterWord = n === 1 ? "taster" : "tasters";
   const parts: string[] = [
-    `The <strong>hedonic scores</strong> for this food vary across demographic groups as it follows:`,
+    `The <strong>survey hedonic scores</strong> for this food vary across demographic groups as it follows:`,
   ];
 
   const ageExt = extremeBuckets(ages);

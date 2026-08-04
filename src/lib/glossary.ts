@@ -20,6 +20,11 @@ export type GlossaryTerm =
   | "tasterAccount"
   | "tasterSubject"
   | "overallAcceptance"
+  | "overallProfile"
+  | "surveyColor"
+  | "surveyFlavorAroma"
+  | "surveySaltSweet"
+  | "surveyTexture"
   | "faceOnly"
   | "lowConfidenceFilter"
   | "hedonicBand"
@@ -117,7 +122,27 @@ export const GLOSSARY: Record<GlossaryTerm, GlossaryEntry> = {
   },
   overallAcceptance: {
     title: "Overall acceptance",
-    body: "Final overall survey liking on the 1-9 hedonic scale.",
+    body: "Final overall survey liking on the 1-9 hedonic scale (Overall Profile).",
+  },
+  overallProfile: {
+    title: "Overall Profile",
+    body: "The taster's overall liking of the product as a whole, separate from individual sensory attributes like color or texture.",
+  },
+  surveyColor: {
+    title: "Color",
+    body: "How appealing the food looks, based on its color and visual appearance.",
+  },
+  surveyFlavorAroma: {
+    title: "Flavor / Aroma",
+    body: "How much the taster likes the food's taste and smell together.",
+  },
+  surveySaltSweet: {
+    title: "Salt / Sweet",
+    body: "How much the taster likes the saltiness or sweetness of the food.",
+  },
+  surveyTexture: {
+    title: "Texture",
+    body: "How much the taster likes the food's mouthfeel, thickness, or viscosity.",
   },
   faceOnly: {
     title: "Face only",
