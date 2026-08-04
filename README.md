@@ -63,7 +63,7 @@ JWT_SECRET=change-me-in-production
 JWT_TTL=8h
 ```
 
-Seeded accounts (bcrypt): `admin@familis.com` / `admin123` (admin), `tester@familis.com` / `tester123` (tester). Staff is a supported role; optional extra accounts live in `demo_kit/optional_demo_users.sql`.
+Seeded accounts (bcrypt): `admin@familis.com` / `admin123` (admin), `taster@familis.com` / `taster123` (taster). Staff is a supported role; optional extra accounts live in `demo_kit/optional_demo_users.sql`.
 
 Optional live FER: `npm run emotion-service` (set `EMOTION_SERVICE_URL` on the API if not default).
 
