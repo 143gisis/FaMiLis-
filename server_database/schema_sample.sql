@@ -3,19 +3,19 @@
 -- =====================================================
 
 -- =====================================================
--- USERS
+-- USERS (ACCOUNTS)
 -- =====================================================
 
 -- password_hash: bcrypt for plaintext admin123 (regenerate: npm run hash-password -- admin123)
 INSERT INTO users (user_id, username, email, password_hash, role) VALUES
 (1,'adminXYZ','XYZ@familis.com','$2b$10$N8QL6lPJKkVZLqfO0aubDONoidtiq0FMVUQ7SdIXkufSJfuav7nKO','admin');
 
--- password_hash: bcrypt for plaintext tester123 (regenerate: npm run hash-password -- tester123)
+-- password_hash: bcrypt for plaintext taster123 (regenerate: npm run hash-password -- taster123)
 INSERT INTO users (user_id, username, email, password_hash, role) VALUES
-(2,'testerXYZ','tester@familis.com','$2b$10$N8QL6lPJKkVZLqfO0aubDONoidtiq0FMVUQ7SdIXkufSJfuav7nKO','tester');
+(2,'tasterXYZ','taster@familis.com','$2b$10$kR9ZpMCA58K6TDRD67PkM.Z.yjNwKQoR.JIe/nWw/Dh1mowokXzU2','taster');
 
 -- =====================================================
--- PARTICIPANTS
+-- PARTICIPANTS (NOW TASTERS)
 -- =====================================================
 
 INSERT INTO participants (participant_id, tester_label, age, gender) VALUES
