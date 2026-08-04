@@ -1,3 +1,4 @@
+import type { GlossaryTerm } from "../../lib/glossary";
 import { InfoTip } from "../InfoTip";
 import { clampPct } from "./utils";
 
@@ -8,6 +9,7 @@ export function ColoredRatingBar({
   n,
   stdDev,
   showStatsTips = false,
+  infoTerm,
 }: {
   label: string;
   rating: number | null;
@@ -18,6 +20,8 @@ export function ColoredRatingBar({
   stdDev?: number;
   /** When true, show InfoTips next to N / σ (use on the first bar only to avoid clutter). */
   showStatsTips?: boolean;
+  /** Optional glossary tip next to the attribute label. */
+  infoTerm?: GlossaryTerm;
 }) {
   const val = rating ?? 0;
   const pct = clampPct((val / 9) * 100);
@@ -32,6 +36,7 @@ export function ColoredRatingBar({
             aria-hidden="true"
           />
           {label}
+          {infoTerm ? <InfoTip term={infoTerm} align="left" /> : null}
         </span>
         <span className="text-sm text-gray-900 font-semibold tabular-nums">
           {rating == null
